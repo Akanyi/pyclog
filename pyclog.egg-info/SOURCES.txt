@@ -2,6 +2,7 @@ LICENSE
 README.md
 pyproject.toml
 pyclog/__init__.py
+pyclog/cli.py
 pyclog/constants.py
 pyclog/exceptions.py
 pyclog/handler.py
@@ -10,6 +11,9 @@ pyclog/writer.py
 pyclog.egg-info/PKG-INFO
 pyclog.egg-info/SOURCES.txt
 pyclog.egg-info/dependency_links.txt
+pyclog.egg-info/entry_points.txt
 pyclog.egg-info/top_level.txt
+tests/test_cli.py
 tests/test_reader_writer.py
+tests/test_rotating_handler.py
 tests/test_writer.py

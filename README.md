@@ -139,6 +139,66 @@ with ClogReader("app.clog") as reader:
         print(f"[{timestamp}] [{level}] {message}")
 ```
 
+## 命令行工具 (CLI)
+
+`pyclog` 提供了一个命令行工具，用于将 `.clog` 文件导出为其他格式（JSON 或纯文本），并支持压缩。
+
+### 安装 CLI
+
+CLI 工具随 `pyclog` 包一起安装。如果需要 Zstandard 压缩支持，请确保安装了 `pyclog[zstandard]`：
+
+```bash
+pip install pyclog
+# 如果需要 Zstandard 压缩支持
+pip install pyclog[zstandard]
+```
+
+### 使用 CLI
+
+CLI 工具的入口点是 `pyclog` 命令（如果已正确安装为脚本）。
+
+**基本用法：**
+
+```bash
+pyclog --input <input_file.clog> --output <output_file> [--format <json|text>] [--compress <none|gzip|zstd>]
+```
+
+**参数说明：**
+
+* `--input`, `-i`：**必需**。要读取的 `.clog` 文件路径。
+* `--output`, `-o`：**必需**。导出文件的输出路径。
+* `--format`, `-f`：导出格式。可选值：`json` (JSON 格式) 或 `text` (纯文本格式)。默认为 `text`。
+  * `json` 格式将每条日志记录导出为 JSON 对象数组。
+  * `text` 格式将每条日志记录导出为一行，格式为 `时间戳|日志级别|日志消息`。
+* `--compress`, `-c`：导出文件的压缩格式。可选值：`none` (不压缩), `gzip`, `zstd`。默认为 `none`。
+  * 选择 `zstd` 需要额外安装 `python-zstandard` 库。
+
+**示例：**
+
+1. **将 `.clog` 文件导出为纯文本文件 (无压缩)：**
+
+    ```bash
+    pyclog -i my_log.clog -o my_log.txt -f text -c none
+    ```
+
+    这将生成一个 `my_log.txt` 文件，其中包含 `my_log.clog` 中的日志记录，每条记录一行，格式为 `时间戳|日志级别|日志消息`。
+
+2. **将 `.clog` 文件导出为 JSON 文件 (使用 Gzip 压缩)：**
+
+    ```bash
+    pyclog -i my_log.clog -o my_log.json.gz -f json -c gzip
+    ```
+
+    这将生成一个 `my_log.json.gz` 文件，其中包含 `my_log.clog` 中的日志记录的 JSON 表示，并使用 Gzip 压缩。
+
+3. **将 `.clog` 文件导出为 JSON 文件 (使用 Zstandard 压缩)：**
+
+    ```bash
+    pyclog -i my_log.clog -o my_log.json.zst -f json -c zstd
+    ```
+
+    这将生成一个 `my_log.json.zst` 文件，其中包含 `my_log.clog` 中的日志记录的 JSON 表示，并使用 Zstandard 压缩。请确保已安装 `pyclog[zstandard]`。
+
 ## 开发
 
 ### 运行测试
@@ -149,7 +209,7 @@ pytest tests/
 
 ## 贡献
 
-欢迎贡献！请参阅 `CONTRIBUTING.md` 获取更多信息。
+欢迎贡献！请参阅 `DEVELOPMENT.md` 获取更多信息。
 
 ## 许可证
 
