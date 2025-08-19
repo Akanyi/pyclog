@@ -201,14 +201,21 @@ class ClogWriter:
         """
         with self.lock:
             timestamp = datetime.now().isoformat()
-            record_str = f"{timestamp}{constants.FIELD_DELIMITER.decode()}{level}{constants.FIELD_DELIMITER.decode()}{message}{constants.RECORD_DELIMITER.decode()}"
+            
+            # 将消息中的换行符替换为内部表示（垂直制表符 \v），以支持多行日志
+            processed_message = message.replace('\n', '\v')
+
+            record_str = (
+                f"{timestamp}{constants.FIELD_DELIMITER.decode()}"
+                f"{level}{constants.FIELD_DELIMITER.decode()}"
+                f"{processed_message}{constants.RECORD_DELIMITER.decode()}"
+            )
             record_bytes = record_str.encode('utf-8')
             
             self.buffer.append(record_bytes)
             self.buffer_current_size += len(record_bytes)
             self.buffer_current_records += 1
 
-            # 检查是否刷新缓冲区的逻辑现在在锁的保护下，是原子操作
             if self.buffer_current_size >= self.buffer_flush_size or \
                self.buffer_current_records >= self.buffer_flush_records:
                 self._flush_chunk()
@@ -232,8 +239,6 @@ class ClogWriter:
         compressed_data, uncompressed_size, record_count_in_chunk = self._compress_chunk(records_data)
         compressed_size = len(compressed_data)
 
-        # 写入块头 (Compressed Size, Uncompressed Size, Record Count)
-        # 使用 little-endian (LE) 字节序
         chunk_header = struct.pack('<III', compressed_size, uncompressed_size, record_count_in_chunk)
         
         try:
@@ -255,7 +260,7 @@ class ClogWriter:
         with self.lock:
             if self.file:
                 try:
-                    self._flush_chunk() # 确保所有剩余数据被写入
+                    self._flush_chunk()
                 except ClogWriteError as e:
                     print(f"警告: 关闭文件前刷新缓冲区失败: {e}")
                 finally:
