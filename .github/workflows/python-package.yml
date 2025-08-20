@@ -35,7 +35,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         # 安装代码风格检查、测试和覆盖率工具
-        python -m pip install flake8 pytest pytest-cov
+        python -m pip install flake8 pytest pytest-cov pytest-mock
         # 以可编辑模式安装 pyclog 包本身，并包含 zstandard 可选依赖
         # 这是测试 Python 包的标准做法
         python -m pip install -e .[zstandard]
