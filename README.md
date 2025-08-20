@@ -26,32 +26,33 @@
 
 #### 1. 文件头 (File Header) - 固定16字节
 
-| 偏移量 (Bytes) | 长度 (Bytes) | 字段名          | 描述                                                                                             |
-| :------------- | :----------- | :-------------- | :----------------------------------------------------------------------------------------------- |
-| 0-3            | 4            | Magic Bytes     | 固定的 `b'CLOG'` (0x43, 0x4C, 0x4F, 0x47)，用于快速识别文件类型。                               |
-| 4              | 1            | Format Version  | 格式版本号，例如 `\x01` 代表版本1。允许未来升级格式而不破坏向后兼容性。                         |
-| 5              | 1            | Compression Code | 压缩算法代码。`\x00`: 无压缩 (用于调试), `\x01`: Gzip, `\x02`: Zstandard。允许扩展。 |
-| 6-15           | 10           | Reserved        | 保留字节，用 `\x00` 填充。为未来扩展（如加密标志、元数据等）预留空间。                           |
+| 偏移量 (Bytes) | 长度 (Bytes) | 字段名 | 描述 |
+| :--- | :--- | :--- | :--- |
+| 0-3 | 4 | Magic Bytes | 固定的 `b'CLOG'` (0x43, 0x4C, 0x4F, 0x47)，用于快速识别文件类型。 |
+| 4 | 1 | Format Version | 格式版本号，例如 `\x01` 代表版本1。允许未来升级格式而不破坏向后兼容性。 |
+| 5 | 1 | Compression Code | 压缩算法代码。`\x00`: 无压缩 (用于调试), `\x01`: Gzip, `\x02`: Zstandard。允许扩展。 |
+| 6-15 | 10 | Reserved | 保留字节，用 `\x00` 填充。为未来扩展（如加密标志、元数据等）预留空间。 |
 
 #### 2. 数据块 (Chunk) - 变长
 
 每个数据块由 **块头 (Chunk Header)** 和 **块数据 (Chunk Data)** 组成。
 
-| 组成分     | 长度 (Bytes)    | 字段名            | 描述                                                               |
-| :----------- | :-------------- | :---------------- | :----------------------------------------------------------------- |
-| 块头         | 4               | Compressed Size   | 后面紧跟的 **块数据** 的压缩后字节数。读取时，根据这个值就能知道要读多少字节。 |
-|              | 4               | Uncompressed Size | 块数据解压后的原始字节数。用于在解压前分配内存缓冲区。             |
-|              | 4               | Record Count      | 这个块中包含的日志记录条数。                                       |
+| 组成分 | 长度 (Bytes) | 字段名 | 描述 |
+| :--- | :--- | :--- | :--- |
+| 块头 | 4 | Compressed Size | 后面紧跟的 **块数据** 的压缩后字节数。读取时，根据这个值就能知道要读多少字节。 |
+| | 4 | Uncompressed Size | 块数据解压后的原始字节数。用于在解压前分配内存缓冲区。 |
+| | 4 | Record Count | 这个块中包含的日志记录条数。 |
 | 块数据 (压缩) | Compressed Size | Compressed Log Data | 将多条日志记录序列化后，使用文件头中指定的压缩算法进行压缩得到的数据。 |
 
 #### 3. 块内日志记录的序列化
 
-在压缩之前，块内的多条日志记录如何组织？我们使用简单的文本格式，每条记录占一行。
+在压缩之前，块内的多条日志记录被组织为一种简单的文本格式。
 
-**记录格式**: `ISO8601时间戳\t日志级别\t日志消息\n`
+**记录结构**: `timestamp<FIELD_DELIMITER>level<FIELD_DELIMITER>message<RECORD_DELIMITER>`
 
-* **分隔符**: 使用制表符 `\t` (Tab) 作为字段分隔符，因为它在普通日志消息中出现的概率远低于逗号或空格。
-* **换行符**: 使用 `\n` 分隔不同的日志记录。
+* **字段分隔符 (`FIELD_DELIMITER`)**: 默认为制表符 `\t` (`b'\t'`)，因为它在普通日志消息中出现的概率较低。
+* **记录分隔符 (`RECORD_DELIMITER`)**: 默认为换行符 `\n` (`b'\n'`)，用于分隔不同的日志记录。
+* **多行消息处理**: 为了可靠地使用 `\n` 作为记录分隔符，日志消息体内的所有换行符 `\n` 会被内部替换为垂直制表符 `\v`。在读取或导出时，`\v` 会被转换回 `\n`，从而完整地保留多行日志的格式。
 
 ## 安装
 
@@ -65,26 +66,29 @@ pip install pyclog[zstandard]
 
 ### 写入 `.clog` 文件
 
+`ClogWriter` 是线程安全的。它内部使用缓冲区来优化写入性能，可以通过 `buffer_flush_size` (字节大小) 和 `buffer_flush_records` (记录数) 参数进行调整。
+
 ```python
 from pyclog import ClogWriter, constants
+from pyclog.exceptions import UnsupportedCompressionError
 
 # 使用 gzip 压缩写入
 with ClogWriter("my_log.clog", compression_code=constants.COMPRESSION_GZIP) as writer:
     writer.write_record("INFO", "这是一个信息日志。")
     writer.write_record("WARNING", "这是一个警告日志，带有特殊字符：!@#$%^&*()")
-    writer.write_record("ERROR", "发生了一个错误。")
+    # 支持多行日志
+    writer.write_record("ERROR", "发生了一个错误。\n这是错误的第二行。")
 
 # 使用无压缩写入 (用于调试)
 with ClogWriter("my_debug_log.clog", compression_code=constants.COMPRESSION_NONE) as writer:
     writer.write_record("DEBUG", "这是调试日志。")
 
 # 如果安装了 python-zstandard，可以使用 Zstandard 压缩
-from pyclog import ClogWriter, constants
- try:
-     with ClogWriter("my_zstd_log.clog", compression_code=constants.COMPRESSION_ZSTANDARD) as writer:
-         writer.write_record("INFO", "这是 Zstandard 压缩的日志。")
- except UnsupportedCompressionError as e:
-     print(f"错误: {e}")
+try:
+    with ClogWriter("my_zstd_log.clog", compression_code=constants.COMPRESSION_ZSTANDARD) as writer:
+        writer.write_record("INFO", "这是 Zstandard 压缩的日志。")
+except UnsupportedCompressionError as e:
+    print(f"错误: {e}")
 ```
 
 ### 读取 `.clog` 文件
@@ -92,44 +96,47 @@ from pyclog import ClogWriter, constants
 ```python
 from pyclog import ClogReader
 
-# 读取日志
 with ClogReader("my_log.clog") as reader:
     for timestamp, level, message in reader.read_records():
-        print(f"[{timestamp}] [{level}] {message}")
-
-# 读取调试日志
-with ClogReader("my_debug_log.clog") as reader:
-    for timestamp, level, message in reader.read_records():
+        # 读取时，多行日志的换行符会被自动还原
         print(f"[{timestamp}] [{level}] {message}")
 ```
 
 ### 与 Python `logging` 模块集成
 
+#### 基本用法 (`ClogFileHandler`)
+
+`pyclog` 可以无缝替换标准的 `logging.FileHandler`。
+
+**重要提示**: `ClogFileHandler` 会自动处理时间戳和日志级别。因此，传递给它的 `logging.Formatter` 应该只包含消息本身，例如 `logging.Formatter('%(message)s')`，以避免信息重复。
+
 ```python
 import logging
 from pyclog import ClogFileHandler, constants
 
-# 配置日志器
+# 1. 配置日志器
 logger = logging.getLogger("my_app")
 logger.setLevel(logging.INFO)
 
-# 创建 ClogFileHandler 实例
+# 2. 创建 ClogFileHandler 实例
 clog_handler = ClogFileHandler("app.clog", compression_code=constants.COMPRESSION_GZIP)
 
-# 设置日志格式
-formatter = logging.Formatter('%(asctime)s\t%(levelname)s\t%(message)s')
+# 3. 设置日志格式 (关键：只格式化消息本身)
+# ClogWriter 会自动添加时间戳和日志级别
+formatter = logging.Formatter('%(message)s')
 clog_handler.setFormatter(formatter)
 
-# 将 handler 添加到日志器
+# 4. 将 handler 添加到日志器
 logger.addHandler(clog_handler)
 
-# 记录日志
+# 5. 记录日志
 logger.info("应用程序启动。")
-logger.warning("发现潜在问题。")
-logger.error("处理请求时发生异常。")
+logger.warning("发现一个潜在问题。")
+logger.error("处理请求时发生异常。", exc_info=True) # 异常信息也会被记录
 
-# 确保日志被写入文件
-clog_handler.close() # 或者在程序退出时自动关闭
+# 确保所有缓冲的日志都已写入文件
+# 在实际应用中，通常在程序退出时统一关闭
+clog_handler.close()
 
 print("日志已写入 app.clog 文件。")
 
@@ -141,23 +148,59 @@ with ClogReader("app.clog") as reader:
         print(f"[{timestamp}] [{level}] {message}")
 ```
 
+#### 日志轮转 (`ClogRotatingFileHandler`)
+
+`pyclog` 还提供了 `ClogRotatingFileHandler`，它继承自 `ClogFileHandler` 并增加了基于文件大小的日志轮转功能，类似于 `logging.handlers.RotatingFileHandler`。
+
+```python
+import logging
+import time
+from pyclog import ClogRotatingFileHandler, constants
+
+logger = logging.getLogger("my_rotating_app")
+logger.setLevel(logging.DEBUG)
+
+# 创建 ClogRotatingFileHandler 实例
+# 当文件大小接近 256 字节时进行轮转，最多保留 3 个备份文件。
+handler = ClogRotatingFileHandler(
+    "rotating_app.clog",
+    mode='w',
+    maxBytes=256,
+    backupCount=3,
+    compression_code=constants.COMPRESSION_GZIP
+)
+
+# 同样，格式化器只应包含消息
+formatter = logging.Formatter('%(message)s - %(name)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
+# 记录日志直到触发轮转
+print("开始记录日志以触发轮转...")
+for i in range(20):
+    logger.info(f"这是第 {i+1} 条测试日志。")
+    time.sleep(0.01)
+
+handler.close()
+print("日志已写入 rotating_app.clog 并已根据需要进行了轮转。")
+print("检查目录下是否存在 rotating_app.clog, rotating_app.clog.1 等文件。")
+```
+
 ## 命令行工具 (CLI)
 
-`pyclog` 提供了一个命令行工具，用于将 `.clog` 文件导出为其他格式（JSON 或纯文本），并支持压缩。
+`pyclog` 提供了一个命令行工具，用于将 `.clog` 文件导出为其他格式（JSON 或纯文本），并支持对输出文件进行压缩。
 
 ### 安装 CLI
 
-CLI 工具随 `pyclog` 包一起安装。如果需要 Zstandard 压缩支持，请确保安装了 `pyclog[zstandard]`：
+CLI 工具随 `pyclog` 包一起安装。
 
 ```bash
 pip install pyclog
-# 如果需要 Zstandard 压缩支持
+# 如果需要 Zstandard 压缩/解压缩支持
 pip install pyclog[zstandard]
 ```
 
 ### 使用 CLI
-
-CLI 工具的入口点是 `pyclog` 命令（如果已正确安装为脚本）。
 
 **基本用法：**
 
@@ -169,10 +212,10 @@ pyclog --input <input_file.clog> --output <output_file> [--format <json|text>] [
 
 * `--input`, `-i`：**必需**。要读取的 `.clog` 文件路径。
 * `--output`, `-o`：**必需**。导出文件的输出路径。
-* `--format`, `-f`：导出格式。可选值：`json` (JSON 格式) 或 `text` (纯文本格式)。默认为 `text`。
-  * `json` 格式将每条日志记录导出为 JSON 对象数组。
-  * `text` 格式将每条日志记录导出为一行，格式为 `时间戳|日志级别|日志消息`。
-* `--compress`, `-c`：导出文件的压缩格式。可选值：`none` (不压缩), `gzip`, `zstd`。默认为 `none`。
+* `--format`, `-f`：导出格式。可选值：`json` 或 `text`。默认为 `text`。
+  * `json`：将每条日志记录导出为 JSON 对象数组。
+  * `text`：将每条日志记录导出为 `时间戳|日志级别|日志消息` 格式的纯文本。此格式还会对多行日志进行智能对齐，以提高可读性。
+* `--compress`, `-c`：导出文件的压缩格式。可选值：`none`, `gzip`, `zstd`。默认为 `none`。
   * 选择 `zstd` 需要额外安装 `python-zstandard` 库。
 
 **示例：**
@@ -180,26 +223,20 @@ pyclog --input <input_file.clog> --output <output_file> [--format <json|text>] [
 1. **将 `.clog` 文件导出为纯文本文件 (无压缩)：**
 
     ```bash
-    pyclog -i my_log.clog -o my_log.txt -f text -c none
+    pyclog -i my_log.clog -o my_log.txt -f text
     ```
 
-    这将生成一个 `my_log.txt` 文件，其中包含 `my_log.clog` 中的日志记录，每条记录一行，格式为 `时间戳|日志级别|日志消息`。
-
-2. **将 `.clog` 文件导出为 JSON 文件 (使用 Gzip 压缩)：**
+2. **将 `.clog` 文件导出为 Gzip 压缩的 JSON 文件：**
 
     ```bash
     pyclog -i my_log.clog -o my_log.json.gz -f json -c gzip
     ```
 
-    这将生成一个 `my_log.json.gz` 文件，其中包含 `my_log.clog` 中的日志记录的 JSON 表示，并使用 Gzip 压缩。
-
-3. **将 `.clog` 文件导出为 JSON 文件 (使用 Zstandard 压缩)：**
+3. **将 `.clog` 文件导出为 Zstandard 压缩的 JSON 文件：**
 
     ```bash
     pyclog -i my_log.clog -o my_log.json.zst -f json -c zstd
     ```
-
-    这将生成一个 `my_log.json.zst` 文件，其中包含 `my_log.clog` 中的日志记录的 JSON 表示，并使用 Zstandard 压缩。请确保已安装 `pyclog[zstandard]`。
 
 ## 开发
 
