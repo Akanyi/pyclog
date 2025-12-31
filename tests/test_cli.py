@@ -135,8 +135,9 @@ class TestCli(unittest.TestCase):
 
         dctx = zstd.ZstdDecompressor()
         with open(output_path, "rb") as f:
-            compressed_content = f.read()
-        decompressed_content = dctx.decompress(compressed_content).decode('utf-8')
+            with dctx.stream_reader(f) as reader:
+                decompressed_content = reader.read().decode('utf-8')
+        
         self.assertIn("这是一条测试日志消息 1。", decompressed_content)
         self.assertEqual(len(decompressed_content.strip().split('\n')), 3)
 
@@ -155,8 +156,9 @@ class TestCli(unittest.TestCase):
 
         dctx = zstd.ZstdDecompressor()
         with open(output_path, "rb") as f:
-            compressed_content = f.read()
-        decompressed_content = dctx.decompress(compressed_content).decode('utf-8')
+            with dctx.stream_reader(f) as reader:
+                decompressed_content = reader.read().decode('utf-8')
+        
         content = json.loads(decompressed_content)
         self.assertEqual(len(content), 3)
         self.assertEqual(content[0]["level"], "INFO")
@@ -175,7 +177,10 @@ class TestCli(unittest.TestCase):
                     with self.assertRaises(SystemExit) as cm:
                         cli_main()
                     self.assertEqual(cm.exception.code, 1)
-                    self.assertIn("无法打开文件 'non_existent.clog' 进行读取", mock_stderr.getvalue())
+                    error_msg = mock_stderr.getvalue()
+                    self.assertIn("处理 .clog 文件时发生错误", error_msg)
+                    self.assertIn("无法打开文件", error_msg)
+                    self.assertIn("non_existent.clog", error_msg)
 
     def test_invalid_clog_file(self):
         # 创建一个无效的 .clog 文件

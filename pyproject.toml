@@ -1,6 +1,6 @@
 [project]
 name = "pyclog"
-version = "0.1.3"
+version = "0.1.4"
 description = "A Python package for reading and writing .clog files with logging integration."
 authors = [{name = "Akanyi", email = "sakayezq@gmail.com"}]
 license = {text = "MIT"}
