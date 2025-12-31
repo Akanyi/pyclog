@@ -71,11 +71,28 @@ def main():
 
         output_data = ""
         if output_format == "json":
+            # JSON格式会正确处理 \n，但我们的内部表示是 \v，需要转换回来
+            for record in records:
+                record['message'] = record['message'].replace('\v', '\n')
             output_data = json.dumps(records, indent=2, ensure_ascii=False)
-        elif output_format == "text":
-            output_data = "\n".join([f"{r['timestamp']}|{r['level']}|{r['message']}" for r in records])
 
-        # 根据压缩选项处理输出
+        elif output_format == "text":
+            output_lines = []
+            for r in records:
+                timestamp = r['timestamp']
+                level = r['level']
+                message = r['message']
+                
+                # 为多行日志的对齐计算所需的填充
+                padding = ' ' * (len(timestamp) + 1 + len(level) + 1)
+                
+                # 将内部换行符 \v 替换为真正的换行符和对齐填充
+                aligned_message = message.replace('\v', '\n' + padding)
+                
+                output_lines.append(f"{timestamp}|{level}|{aligned_message}")
+            
+            output_data = "\n".join(output_lines)
+
         if output_compression == "none":
             with open(output_file, "w", encoding="utf-8") as f:
                 f.write(output_data)

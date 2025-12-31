@@ -2,6 +2,8 @@
 
 `pyclog` 是一个 Python 包，提供简单易用的 API 来读写 `.clog` 文件，并与 Python 标准 `logging` 模块无缝集成。
 
+[Github](https://github.com/Akanyi/pyclog)
+
 ## `.clog` 文件格式
 
 `.clog` 文件旨在提供一种高效、可流式处理的日志存储格式，支持压缩以节省空间。
