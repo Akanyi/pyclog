@@ -1,1 +1,156 @@
+# pyclog
 
+`pyclog` 是一个 Python 包，提供简单易用的 API 来读写 `.clog` 文件，并与 Python 标准 `logging` 模块无缝集成。
+
+## `.clog` 文件格式
+
+`.clog` 文件旨在提供一种高效、可流式处理的日志存储格式，支持压缩以节省空间。
+
+### 核心设计思想
+
+* **文件头 (Header)**: 用于快速识别文件类型、版本和压缩算法。
+* **数据块 (Chunk)**: 将多条日志记录组合在一起进行压缩，以获得高压缩率。
+* **流式处理**: 可以一条一条地写入，也可以一个块一个块地读取，无需将整个文件加载到内存。
+
+### 文件结构
+
+```code
+[ File Header (16 bytes) ]
+[ Chunk 1 ]
+[ Chunk 2 ]
+...
+[ Chunk N ]
+```
+
+#### 1. 文件头 (File Header) - 固定16字节
+
+| 偏移量 (Bytes) | 长度 (Bytes) | 字段名          | 描述                                                                                             |
+| :------------- | :----------- | :-------------- | :----------------------------------------------------------------------------------------------- |
+| 0-3            | 4            | Magic Bytes     | 固定的 `b'CLOG'` (0x43, 0x4C, 0x4F, 0x47)，用于快速识别文件类型。                               |
+| 4              | 1            | Format Version  | 格式版本号，例如 `\x01` 代表版本1。允许未来升级格式而不破坏向后兼容性。                         |
+| 5              | 1            | Compression Code | 压缩算法代码。`\x00`: 无压缩 (用于调试), `\x01`: Gzip, `\x02`: Zstandard。允许扩展。 |
+| 6-15           | 10           | Reserved        | 保留字节，用 `\x00` 填充。为未来扩展（如加密标志、元数据等）预留空间。                           |
+
+#### 2. 数据块 (Chunk) - 变长
+
+每个数据块由 **块头 (Chunk Header)** 和 **块数据 (Chunk Data)** 组成。
+
+| 组成分     | 长度 (Bytes)    | 字段名            | 描述                                                               |
+| :----------- | :-------------- | :---------------- | :----------------------------------------------------------------- |
+| 块头         | 4               | Compressed Size   | 后面紧跟的 **块数据** 的压缩后字节数。读取时，根据这个值就能知道要读多少字节。 |
+|              | 4               | Uncompressed Size | 块数据解压后的原始字节数。用于在解压前分配内存缓冲区。             |
+|              | 4               | Record Count      | 这个块中包含的日志记录条数。                                       |
+| 块数据 (压缩) | Compressed Size | Compressed Log Data | 将多条日志记录序列化后，使用文件头中指定的压缩算法进行压缩得到的数据。 |
+
+#### 3. 块内日志记录的序列化
+
+在压缩之前，块内的多条日志记录如何组织？我们使用简单的文本格式，每条记录占一行。
+
+**记录格式**: `ISO8601时间戳\t日志级别\t日志消息\n`
+
+* **分隔符**: 使用制表符 `\t` (Tab) 作为字段分隔符，因为它在普通日志消息中出现的概率远低于逗号或空格。
+* **换行符**: 使用 `\n` 分隔不同的日志记录。
+
+## 安装
+
+```bash
+pip install pyclog
+# 如果需要 Zstandard 压缩支持
+pip install pyclog[zstandard]
+```
+
+## 使用示例
+
+### 写入 `.clog` 文件
+
+```python
+from pyclog import ClogWriter, constants
+
+# 使用 gzip 压缩写入
+with ClogWriter("my_log.clog", compression_code=constants.COMPRESSION_GZIP) as writer:
+    writer.write_record("INFO", "这是一个信息日志。")
+    writer.write_record("WARNING", "这是一个警告日志，带有特殊字符：!@#$%^&*()")
+    writer.write_record("ERROR", "发生了一个错误。")
+
+# 使用无压缩写入 (用于调试)
+with ClogWriter("my_debug_log.clog", compression_code=constants.COMPRESSION_NONE) as writer:
+    writer.write_record("DEBUG", "这是调试日志。")
+
+# 如果安装了 python-zstandard，可以使用 Zstandard 压缩
+from pyclog import ClogWriter, constants
+ try:
+     with ClogWriter("my_zstd_log.clog", compression_code=constants.COMPRESSION_ZSTANDARD) as writer:
+         writer.write_record("INFO", "这是 Zstandard 压缩的日志。")
+ except UnsupportedCompressionError as e:
+     print(f"错误: {e}")
+```
+
+### 读取 `.clog` 文件
+
+```python
+from pyclog import ClogReader
+
+# 读取日志
+with ClogReader("my_log.clog") as reader:
+    for timestamp, level, message in reader.read_records():
+        print(f"[{timestamp}] [{level}] {message}")
+
+# 读取调试日志
+with ClogReader("my_debug_log.clog") as reader:
+    for timestamp, level, message in reader.read_records():
+        print(f"[{timestamp}] [{level}] {message}")
+```
+
+### 与 Python `logging` 模块集成
+
+```python
+import logging
+from pyclog import ClogFileHandler, constants
+
+# 配置日志器
+logger = logging.getLogger("my_app")
+logger.setLevel(logging.INFO)
+
+# 创建 ClogFileHandler 实例
+clog_handler = ClogFileHandler("app.clog", compression_code=constants.COMPRESSION_GZIP)
+
+# 设置日志格式
+formatter = logging.Formatter('%(asctime)s\t%(levelname)s\t%(message)s')
+clog_handler.setFormatter(formatter)
+
+# 将 handler 添加到日志器
+logger.addHandler(clog_handler)
+
+# 记录日志
+logger.info("应用程序启动。")
+logger.warning("发现潜在问题。")
+logger.error("处理请求时发生异常。")
+
+# 确保日志被写入文件
+clog_handler.close() # 或者在程序退出时自动关闭
+
+print("日志已写入 app.clog 文件。")
+
+# 验证写入的日志
+from pyclog import ClogReader
+with ClogReader("app.clog") as reader:
+    print("\n--- 从 app.clog 读取日志 ---")
+    for timestamp, level, message in reader.read_records():
+        print(f"[{timestamp}] [{level}] {message}")
+```
+
+## 开发
+
+### 运行测试
+
+```bash
+pytest tests/
+```
+
+## 贡献
+
+欢迎贡献！请参阅 `CONTRIBUTING.md` 获取更多信息。
+
+## 许可证
+
+本项目根据 [MIT 许可证](LICENSE) 发布。

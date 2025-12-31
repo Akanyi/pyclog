@@ -2,3 +2,6 @@
 name = "pyclog"
 version = "0.1.0"
 description = "A Python package for reading and writing .clog files with logging integration."
+
+[project.scripts]
+pyclog-export = "pyclog.cli:main"
