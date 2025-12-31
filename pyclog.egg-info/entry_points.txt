@@ -1,2 +1,2 @@
 [console_scripts]
-pyclog-export = pyclog.cli:main
+pyclog = pyclog.cli:main

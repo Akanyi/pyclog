@@ -7,7 +7,9 @@ pyclog.handler
 """
 
 import logging
-import os  
+import os
+import time
+import re
 from datetime import datetime # 新增导入
 from .writer import ClogWriter
 from . import constants
@@ -21,7 +23,7 @@ class ClogFileHandler(logging.Handler):
     可以处理的格式，并将其写入指定的 .clog 文件。它支持追加模式
     和不同的压缩算法，这些都由底层的 `ClogWriter` 处理。
     """
-    def __init__(self, filename, mode='a', encoding=None, compression_code=constants.COMPRESSION_GZIP):
+    def __init__(self, filename, mode='a', encoding=None, compression_code=constants.COMPRESSION_GZIP, flush_interval=5.0):
         """
         初始化 ClogFileHandler 实例。
 
@@ -36,6 +38,7 @@ class ClogFileHandler(logging.Handler):
                                                 `constants.COMPRESSION_GZIP` (Gzip 压缩),
                                                 `constants.COMPRESSION_ZSTANDARD` (Zstandard 压缩)。
                                                 默认为 `constants.COMPRESSION_GZIP`。
+            flush_interval (float, optional): 被动刷新间隔（秒）。默认为 5.0 秒。
 
         Raises:
             ClogWriteError: 如果无法初始化底层的 ClogWriter。
@@ -45,10 +48,7 @@ class ClogFileHandler(logging.Handler):
         self.mode = mode 
         self.encoding = encoding
         self.compression_code = compression_code
-        self.encoding = encoding
-        self.compression_code = compression_code
-        self.encoding = encoding
-        self.compression_code = compression_code
+        self.flush_interval = flush_interval
         self.clog_writer = None
         self.process_lock = FileLock(f"{self.filename}.lock") # 初始化进程锁
         self.createLock() # 初始化 logging.Handler 的线程锁
@@ -62,14 +62,14 @@ class ClogFileHandler(logging.Handler):
         它会记录一个错误并确保 `clog_writer` 属性为 None。
         """
         try:
-            self.clog_writer = ClogWriter(self.filename, self.mode, self.compression_code)
+            self.clog_writer = ClogWriter(self.filename, self.mode, self.compression_code, flush_interval=self.flush_interval)
         except ClogWriteError as e:
             # 尝试修复：如果文件存在但似乎已损坏（例如大小为0或头部不完整），且我们持有锁，
             # 则可能是一个僵尸文件。尝试以 'w' 模式重置它。
             try:
                 if os.path.exists(self.filename) and os.path.getsize(self.filename) < 16:
                     # 警告：这里会覆盖文件。但在锁保护下且文件明显损坏时，这是合理的恢复策略。
-                    self.clog_writer = ClogWriter(self.filename, 'w', self.compression_code)
+                    self.clog_writer = ClogWriter(self.filename, 'w', self.compression_code, flush_interval=self.flush_interval)
                     return
             except Exception:
                 pass # 如果恢复失败，则抛出原始异常
@@ -126,11 +126,11 @@ class ClogRotatingFileHandler(ClogFileHandler):
     采用“先检查，后写入”的健壮逻辑。
     """
     def __init__(self, filename, mode='a', maxBytes=0, backupCount=0,
-                 encoding=None, compression_code=constants.COMPRESSION_GZIP):
+                 encoding=None, compression_code=constants.COMPRESSION_GZIP, flush_interval=5.0):
         self.maxBytes = maxBytes
         self.backupCount = backupCount
         # 调用父类的构造函数
-        super().__init__(filename, mode, encoding, compression_code)
+        super().__init__(filename, mode, encoding, compression_code, flush_interval=flush_interval)
 
     def doRollover(self):
         """
@@ -194,4 +194,180 @@ class ClogRotatingFileHandler(ClogFileHandler):
             self.doRollover()
         
         # 调用父类的 _emit_internal 进行实际写入
+        super()._emit_internal(record)
+
+class ClogTimedRotatingFileHandler(ClogFileHandler):
+    """
+    一个支持基于时间间隔进行轮转的 ClogFileHandler。
+    """
+    def __init__(self, filename, when='h', interval=1, backupCount=0, encoding=None, delay=False, utc=False, atTime=None, compression_code=constants.COMPRESSION_GZIP, flush_interval=5.0):
+        super().__init__(filename, mode='a', encoding=encoding, compression_code=compression_code, flush_interval=flush_interval)
+        self.when = when.upper()
+        self.interval = interval
+        self.backupCount = backupCount
+        self.utc = utc
+        self.atTime = atTime
+
+        if self.when == 'S':
+            self.interval = 1 # one second
+            self.suffix = "%Y-%m-%d_%H-%M-%S"
+            self.extMatch = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(\.\w+)?$")
+        elif self.when == 'M':
+            self.interval = 60 # one minute
+            self.suffix = "%Y-%m-%d_%H-%M"
+            self.extMatch = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}(\.\w+)?$")
+        elif self.when == 'H':
+            self.interval = 60 * 60 # one hour
+            self.suffix = "%Y-%m-%d_%H"
+            self.extMatch = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}(\.\w+)?$")
+        elif self.when == 'D' or self.when == 'MIDNIGHT':
+            self.interval = 60 * 60 * 24 # one day
+            self.suffix = "%Y-%m-%d"
+            self.extMatch = re.compile(r"^\d{4}-\d{2}-\d{2}(\.\w+)?$")
+        elif self.when.startswith('W'):
+            self.interval = 60 * 60 * 24 * 7 # one week
+            if len(self.when) != 2:
+                raise ValueError("You must specify a day for weekly rollover from 0 to 6 (0 is Monday): %s" % self.when)
+            if self.when[1] < '0' or self.when[1] > '6':
+                raise ValueError("Invalid day specified for weekly rollover: %s" % self.when)
+            self.dayOfWeek = int(self.when[1])
+            self.suffix = "%Y-%m-%d"
+            self.extMatch = re.compile(r"^\d{4}-\d{2}-\d{2}(\.\w+)?$")
+        else:
+            raise ValueError("Invalid rollover interval specified: %s" % self.when)
+
+        self.extMatch = re.compile(self.extMatch.pattern + "$")
+
+        self.interval = self.interval * interval # multiply by units requested
+        
+        if os.path.exists(filename):
+            t = os.stat(filename).st_mtime
+        else:
+            t = int(time.time())
+        self.rolloverAt = self.computeRollover(t)
+
+    def computeRollover(self, currentTime):
+        """
+        根据当前时间计算下次轮转时间。
+        """
+        result = currentTime + self.interval
+        # 如果是 midnight 或每周轮转，需要精确计算下一个午夜/特定周几
+        if self.when == 'MIDNIGHT' or self.when.startswith('W'):
+             # 这里简化处理，直接使用 interval，对于精确的 midnight 轮转，逻辑会更复杂
+             # 类似于 logging.handlers.TimedRotatingFileHandler 的实现
+             # 为保持简洁，暂时假设 interval 足够准确，或者后续可以完全移植标准库逻辑
+             if self.utc:
+                 t = time.gmtime(currentTime)
+             else:
+                 t = time.localtime(currentTime)
+             currentHour = t.tm_hour
+             currentMinute = t.tm_min
+             currentSecond = t.tm_sec
+             currentDay = t.tm_wday
+             
+             # 计算距离下一个午夜的秒数
+             if self.atTime is None:
+                 rotate_ts = ((24 * 60 * 60) - ((currentHour * 60 + currentMinute) * 60 + currentSecond))
+             else:
+                 rotate_ts = ((self.atTime.hour * 60 + self.atTime.minute) * 60 + self.atTime.second) - \
+                             ((currentHour * 60 + currentMinute) * 60 + currentSecond)
+                 if rotate_ts <= 0:
+                     rotate_ts += 24 * 60 * 60
+                     
+             if self.when.startswith('W'):
+                 day = currentDay
+                 if day != self.dayOfWeek:
+                     if day < self.dayOfWeek:
+                         daysToWait = self.dayOfWeek - day
+                     else:
+                         daysToWait = 6 - day + self.dayOfWeek + 1
+                     rotate_ts += (daysToWait * 24 * 60 * 60)
+                 else:
+                     if self.atTime and rotate_ts > 0:
+                         pass # within the same day
+                     else:
+                         # rotate next week
+                         rotate_ts += 7 * 24 * 60 * 60
+             
+             result = currentTime + rotate_ts
+             
+        return result
+
+    def shouldRollover(self, record):
+        """
+        确定是否需要进行日志轮转。
+        """
+        t = int(time.time())
+        if t >= self.rolloverAt:
+            return True
+        return False
+
+    def doRollover(self):
+        """
+        执行日志轮转。
+        """
+        if self.clog_writer:
+            self.clog_writer.close()
+            self.clog_writer = None
+
+        # 生成目标文件名
+        t = self.rolloverAt - self.interval
+        if self.utc:
+            timeTuple = time.gmtime(t)
+        else:
+            timeTuple = time.localtime(t)
+            
+        dfn = self.filename + "." + time.strftime(self.suffix, timeTuple)
+        
+        # 如果目标文件已存在，则删除
+        if os.path.exists(dfn):
+            os.remove(dfn)
+            
+        # 重命名当前日志文件
+        # 注意：这里可能会抛出错误，如果文件在关闭后正好被其他进程删除了（极低概率）
+        # 或者被锁定了。但因为我们持有 process_lock，所以理论上是安全的。
+        if os.path.exists(self.filename):
+            os.rename(self.filename, dfn)
+            
+        # 重新计算下次轮转时间
+        currentTime = int(time.time())
+        newRolloverAt = self.computeRollover(currentTime)
+        while newRolloverAt <= currentTime:
+            newRolloverAt = newRolloverAt + self.interval
+        self.rolloverAt = newRolloverAt
+        
+        # 删除过期备份
+        if self.backupCount > 0:
+            for s in self.getFilesToDelete():
+                os.remove(s)
+
+    def getFilesToDelete(self):
+        """
+        确定哪些文件需要删除。
+        """
+        dirName, baseName = os.path.split(self.filename)
+        fileNames = os.listdir(dirName)
+        result = []
+        prefix = baseName + "."
+        plen = len(prefix)
+        for fileName in fileNames:
+            if fileName[:plen] == prefix:
+                suffix = fileName[plen:]
+                if self.extMatch.match(suffix):
+                    result.append(os.path.join(dirName, fileName))
+        
+        if len(result) < self.backupCount:
+            result = []
+        else:
+            result.sort()
+            result = result[:len(result) - self.backupCount]
+        return result
+
+    def _emit_internal(self, record):
+        """
+        重写内部发射逻辑，增加时间轮转检查。
+        """
+        if self.shouldRollover(record):
+            self.doRollover()
+        
         super()._emit_internal(record)

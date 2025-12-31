@@ -39,7 +39,8 @@ class ClogWriter:
     例如: "2023-10-27T10:00:00.123456|INFO|这是一条日志消息。"
     """
     def __init__(self, file_path, mode='w', compression_code=constants.COMPRESSION_GZIP,
-                 buffer_flush_size=1024 * 1024, buffer_flush_records=1000):
+                 buffer_flush_size=4 * 1024 * 1024, buffer_flush_records=20000,
+                 flush_interval=5.0):
         """
         初始化 ClogWriter 实例。
 
@@ -53,8 +54,10 @@ class ClogWriter:
                                                 `constants.COMPRESSION_GZIP` (Gzip 压缩),
                                                 `constants.COMPRESSION_ZSTANDARD` (Zstandard 压缩)。
                                                 默认为 `constants.COMPRESSION_GZIP`。
-            buffer_flush_size (int, optional): 缓冲区达到此字节大小时刷新。默认为 1MB。
-            buffer_flush_records (int, optional): 缓冲区达到此记录数时刷新。默认为 1000 条记录。
+            buffer_flush_size (int, optional): 缓冲区达到此字节大小时刷新。默认为 4MB。
+            buffer_flush_records (int, optional): 缓冲区达到此记录数时刷新。默认为 20000 条记录。
+            flush_interval (float, optional): 被动刷新间隔（秒）。如果自上次刷新以来超过此时间，
+                                              则在写入下一条记录时强制刷新。默认为 5.0 秒。
 
         Raises:
             ClogWriteError: 如果文件无法打开或在追加模式下文件头验证失败。
@@ -65,10 +68,12 @@ class ClogWriter:
         self.compression_code = compression_code
         self.buffer_flush_size = buffer_flush_size
         self.buffer_flush_records = buffer_flush_records
+        self.flush_interval = flush_interval
         self.file = None
         self.buffer = []
         self.buffer_current_size = 0
         self.buffer_current_records = 0
+        self.last_flush_time = time.time()
         self.lock = threading.Lock()  
 
         try:
@@ -80,111 +85,96 @@ class ClogWriter:
 
     def _open_file(self):
         """
-        根据初始化模式打开文件并处理文件头。
-
-        在 'w' 模式下，文件将被创建或截断，并写入新的文件头。
-        在 'a' 模式下，如果文件存在，它将被打开以进行读写，并验证现有文件头。
-
-        Raises:
-            ClogWriteError: 如果文件无法打开。
-            InvalidClogFileError: 如果在追加模式下现有文件头无效。
+        打开文件并验证/写入文件头。
         """
-        file_exists = os.path.exists(self.file_path)
-        
-        if self.mode == 'a' and file_exists:
-            try:
+        if self.mode == 'a':
+            if os.path.exists(self.file_path):
                 self.file = open(self.file_path, 'r+b')
                 self._validate_header_for_append()
-                self.file.seek(0, os.SEEK_END)
-            except (IOError, InvalidClogFileError) as e:
-                if self.file:
-                    self.file.close()
-                raise ClogWriteError(f"无法以追加模式打开或验证文件 '{self.file_path}': {e}")
-        else:
-            try:
+                self.file.seek(0, 2) # Move to end of file
+            else:
                 self.file = open(self.file_path, 'wb')
                 self._write_header()
-            except IOError as e:
-                raise ClogWriteError(f"无法打开文件 '{self.file_path}' 进行写入: {e}")
+        else:
+            self.file = open(self.file_path, 'wb')
+            self._write_header()
 
     def _validate_header_for_append(self):
         """
-        读取并验证现有文件的头部，用于追加模式。
-
-        确保文件是有效的 .clog 文件，并且其格式版本和压缩算法与当前写入器配置匹配。
-
-        Raises:
-            InvalidClogFileError: 如果文件头损坏、魔术字节不匹配、格式版本不支持或压缩算法不匹配。
+        验证现有文件的头部是否与当前配置匹配。
         """
-        header = self.file.read(16)
-        if len(header) < 16:
-            raise InvalidClogFileError("文件已存在但已损坏或不完整，无法读取完整的文件头。")
+        try:
+            self.file.seek(0)
+            header = self.file.read(16)
+            if len(header) < 16:
+                 raise InvalidClogFileError("文件太小，不是有效的 .clog 文件")
+            
+            magic, version, compression_code, _ = struct.unpack('<4sH2s8s', header)
+            
+            if magic != constants.MAGIC_BYTES:
+                raise InvalidClogFileError("无效的魔术字节")
+            
+            if version != constants.FORMAT_VERSION:
+                # 以后可能支持向后兼容，但现在必须严格匹配
+                 raise InvalidClogFileError(f"不支持的版本: {version}")
+                 
+            if compression_code.rstrip(b'\x00') != self.compression_code.rstrip(b'\x00'):
+                 # 可以选择在这里警告而不是报错，但混合压缩格式可能会使读取器复杂化
+                 raise ClogWriteError(f"压缩格式不匹配: 文件是 {compression_code}, 当前配置是 {self.compression_code}")
 
-        magic_bytes = header[0:4]
-        format_version = header[4:5]
-        compression_code = header[5:6]
-
-        if magic_bytes != constants.MAGIC_BYTES:
-            raise InvalidClogFileError(f"目标文件不是一个有效的 .clog 文件 (Magic Bytes 不匹配)。")
-        
-        if format_version != constants.FORMAT_VERSION_V1:
-            raise InvalidClogFileError(f"不支持的文件格式版本: {format_version.hex()}。")
-        
-        if compression_code != self.compression_code:
-            raise InvalidClogFileError(
-                f"压缩算法不匹配。文件使用 {compression_code.hex()}，"
-                f"但写入器配置为 {self.compression_code.hex()}。"
-            )
+        except struct.error:
+             raise InvalidClogFileError("无法解析文件头")
 
     def _write_header(self):
         """
-        写入固定的16字节文件头。
-
-        文件头包含魔术字节、格式版本、压缩代码和保留字节。
-
-        Raises:
-            ClogWriteError: 如果写入文件头失败。
+        写入 .clog 文件头。
         """
-        header = constants.MAGIC_BYTES + \
-                 constants.FORMAT_VERSION_V1 + \
-                 self.compression_code + \
-                 constants.RESERVED_BYTES
-        try:
-            self.file.write(header)
-        except IOError as e:
-            raise ClogWriteError(f"写入文件头失败: {e}")
+        header = struct.pack('<4sH2s8s', 
+                             constants.MAGIC_BYTES, 
+                             constants.FORMAT_VERSION, 
+                             self.compression_code, 
+                             b'\x00' * 8) # Reserved
+        self.file.write(header)
 
-    def _compress_chunk(self, records_data):
+    def _compress_chunk(self, data):
         """
-        将原始日志数据进行压缩。
+        压缩数据块。
 
         Args:
-            records_data (bytes): 已经拼接好的字节串，包含一个数据块的所有日志记录。
+            data (bytes): 要压缩的原始数据。
 
         Returns:
-            tuple: 包含以下元素的元组：
-                - compressed_data (bytes): 压缩后的数据。
-                - uncompressed_size (int): 原始数据的大小（字节）。
-                - record_count_in_chunk (int): 当前块中的记录条数。
-
-        Raises:
-            UnsupportedCompressionError: 如果选择了不支持的压缩算法或 Zstandard 库未安装。
+            tuple: (compressed_data, uncompressed_size, record_count)
+                   compressed_data (bytes): 压缩后的数据。
+                   uncompressed_size (int): 原始数据大小。
+                   record_count (int): 数据块中的记录数（这里传递的是 current buffer count，
+                   但在 _flush_chunk 中已经在 buffer_current_records 中知道了，
+                   实际上这个 helper 主要负责压缩逻辑）。
+                   
+                   Wait, _flush_chunk calls this.
+                   Let's align with usage in _flush_chunk:
+                   compressed_data, uncompressed_size, record_count_in_chunk = self._compress_chunk(records_data)
         """
-        uncompressed_size = len(records_data)
-        
+        uncompressed_size = len(data)
+        record_count = self.buffer_current_records # Using instance variable as the context
+
         if self.compression_code == constants.COMPRESSION_NONE:
-            compressed_data = records_data
+            return data, uncompressed_size, record_count
+        
         elif self.compression_code == constants.COMPRESSION_GZIP:
-            compressed_data = gzip.compress(records_data)
+            compressed_data = gzip.compress(data)
+            return compressed_data, uncompressed_size, record_count
+            
         elif self.compression_code == constants.COMPRESSION_ZSTANDARD:
             if zstd is None:
-                raise UnsupportedCompressionError("Zstandard 压缩库未安装。请安装 'python-zstandard'。")
+                raise UnsupportedCompressionError("Zstandard 库未安装")
             cctx = zstd.ZstdCompressor()
-            compressed_data = cctx.compress(records_data)
-        else:
-            raise UnsupportedCompressionError(f"不支持的压缩算法代码: {self.compression_code}")
+            compressed_data = cctx.compress(data)
+            return compressed_data, uncompressed_size, record_count
         
-        return compressed_data, uncompressed_size, len(self.buffer)
+        else:
+             # Should be unreachable if validated correctly
+             raise UnsupportedCompressionError(f"未知的压缩代码: {self.compression_code}")
 
     def write_record(self, level, message):
         """
@@ -192,12 +182,15 @@ class ClogWriter:
 
         将给定的日志级别和消息与当前时间戳组合，形成一条完整的日志记录。
         这条记录会被添加到内部缓冲区。当缓冲区达到预设的 `buffer_flush_size`
-        或 `buffer_flush_records` 阈值时，缓冲区内容会自动被压缩并写入文件。
+        或 `buffer_flush_records` 阈值时，或者自上次刷新以来超过了 `flush_interval`，
+        缓冲区内容会自动被压缩并写入文件。
 
         Args:
             level (str): 日志级别（例如 "INFO", "WARNING", "ERROR"）。
             message (str): 日志消息内容。
         """
+        target_flush_needed = False
+        
         with self.lock:
             timestamp = datetime.now().isoformat()
             
@@ -215,9 +208,18 @@ class ClogWriter:
             self.buffer_current_size += len(record_bytes)
             self.buffer_current_records += 1
 
-            if self.buffer_current_size >= self.buffer_flush_size or \
-               self.buffer_current_records >= self.buffer_flush_records:
+            # 检查刷新条件
+            now = time.time()
+            time_since_flush = now - self.last_flush_time
+            
+            if (self.buffer_current_size >= self.buffer_flush_size or 
+                self.buffer_current_records >= self.buffer_flush_records or
+                (self.buffer and time_since_flush >= self.flush_interval)):
+                target_flush_needed = True
+
+            if target_flush_needed:
                 self._flush_chunk()
+                self.last_flush_time = time.time()
 
     def _flush_chunk(self):
         """
