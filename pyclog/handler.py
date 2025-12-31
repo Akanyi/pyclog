@@ -47,8 +47,11 @@ class ClogFileHandler(logging.Handler):
         self.compression_code = compression_code
         self.encoding = encoding
         self.compression_code = compression_code
+        self.encoding = encoding
+        self.compression_code = compression_code
         self.clog_writer = None
-        self.lock = FileLock(f"{self.filename}.lock") # 初始化进程锁
+        self.process_lock = FileLock(f"{self.filename}.lock") # 初始化进程锁
+        self.createLock() # 初始化 logging.Handler 的线程锁
         # self._open_writer() # 不再在初始化时打开，而是延迟到 emit
 
     def _open_writer(self):
@@ -82,7 +85,7 @@ class ClogFileHandler(logging.Handler):
         此方法是线程和进程安全的。
         """
         try:
-            with self.lock:
+            with self.process_lock:
                 self._emit_internal(record)
         except Exception:
             import sys

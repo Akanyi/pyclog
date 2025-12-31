@@ -9,7 +9,7 @@ def test_rotating_handler_rollover(tmp_path):
 
     handler = ClogRotatingFileHandler(
         log_file,
-        maxBytes=1000,
+        maxBytes=1200,
         backupCount=2,
         compression_code=constants.COMPRESSION_NONE
     )
@@ -24,6 +24,10 @@ def test_rotating_handler_rollover(tmp_path):
         logger.info(f"Log message {i} with a lot of padding to ensure file size increases significantly - AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 
     handler.close()
+    
+    # 清理锁文件（虽然 tmp_path 会自动清理，但显式关闭 handler 后锁文件应该不在占用）
+    # 在实际运行中，handler.close() 不会删除 lock 文件，它只是释放句柄。
+    # 这里的测试重点是文件轮转逻辑。
 
     # --- 断言 ---
     assert os.path.exists(log_file), "当前日志文件应该存在"

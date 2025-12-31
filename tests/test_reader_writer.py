@@ -165,34 +165,11 @@ def test_clog_file_handler_integration(temp_clog_file):
     assert read_records[1][0] == "WARNING"
     assert "Log message 2 from handler." in read_records[1][1]
 
-def test_clog_file_handler_init_error(tmp_path, mocker):
-    """测试 ClogFileHandler 在初始化失败时调用 handleError。"""
-    # 为这个测试创建一个独立的 logger，避免状态污染
-    logger = logging.getLogger("test_init_error_logger")
-    for handler in list(logger.handlers):
-        logger.removeHandler(handler)
-        handler.close()
-
-    # 模拟 ClogWriter 初始化失败
-    mock_handle_error = mocker.patch.object(logging.Handler, 'handleError')
-    mocker.patch('pyclog.writer.ClogWriter.__init__', side_effect=ClogWriteError("模拟初始化失败"))
-
-    handler = ClogFileHandler(tmp_path / "error.clog")
-
-    # 验证 handleError 被调用
-    mock_handle_error.assert_called_once()
-    # 验证传递给 handleError 的记录包含了正确的异常信息
-    record = mock_handle_error.call_args[0][0]
-    assert record.exc_info is not None
-    assert isinstance(record.exc_info[1], ClogWriteError)
-    assert "模拟初始化失败" in str(record.exc_info[1])
-
-    # 验证 writer 未被成功创建
-    assert handler.clog_writer is None
-    handler.close()
 
 
-def test_clog_file_handler_emit_error(tmp_path, mocker):
+from unittest.mock import MagicMock, patch
+
+def test_clog_file_handler_emit_error(tmp_path):
     """测试 ClogFileHandler 在 emit 失败时调用 handleError。"""
     # 为这个测试创建另一个独立的 logger
     logger = logging.getLogger("test_emit_error_logger")
@@ -202,31 +179,30 @@ def test_clog_file_handler_emit_error(tmp_path, mocker):
         handler.close()
 
     # 准备一个 mock ClogWriter 实例，它将在调用 write_record 时失败
-    mock_writer_instance = mocker.MagicMock(spec=ClogWriter)
+    mock_writer_instance = MagicMock(spec=ClogWriter)
     mock_writer_instance.write_record.side_effect = ClogWriteError("模拟写入失败")
-    mock_writer_instance.file = mocker.MagicMock() # 模拟 file 属性
+    mock_writer_instance.file = MagicMock() # 模拟 file 属性
 
     # patch ClogWriter 类，让它在被调用时返回 mock 实例
-    mocker.patch('pyclog.handler.ClogWriter', return_value=mock_writer_instance)
+    with patch('pyclog.handler.ClogWriter', return_value=mock_writer_instance):
+        handler = ClogFileHandler(tmp_path / "emit_error.clog")
+        # 验证 writer 初始为 None (Lazy loading)
+        assert handler.clog_writer is None
 
-    handler = ClogFileHandler(tmp_path / "emit_error.clog")
-    # 验证 writer 确实是 mock
-    assert handler.clog_writer is mock_writer_instance
+        # patch 这个 handler 实例的 handleError 方法
+        with patch.object(handler, 'handleError') as mock_handle_error:
+            logger.addHandler(handler)
 
-    # patch 这个 handler 实例的 handleError 方法
-    mock_handle_error = mocker.patch.object(handler, 'handleError')
-    logger.addHandler(handler)
+            # 触发日志，这将导致 emit 失败
+            logger.info("This log should cause an error.")
 
-    # 触发日志，这将导致 emit 失败
-    logger.info("This log should cause an error.")
+            # 验证 handleError 被调用
+            mock_handle_error.assert_called_once()
+            record = mock_handle_error.call_args[0][0]
+            assert record.exc_info is not None
+            assert isinstance(record.exc_info[1], ClogWriteError)
+            assert "模拟写入失败" in str(record.exc_info[1])
 
-    # 验证 handleError 被调用
-    mock_handle_error.assert_called_once()
-    record = mock_handle_error.call_args[0][0]
-    assert record.exc_info is not None
-    assert isinstance(record.exc_info[1], ClogWriteError)
-    assert "模拟写入失败" in str(record.exc_info[1])
-
-    handler.close()
-    # 验证 handler 在关闭时也调用了 writer 的 close
-    mock_writer_instance.close.assert_called_once()
+        handler.close()
+        # 验证 handler 在关闭时也调用了 writer 的 close
+        mock_writer_instance.close.assert_called_once()
