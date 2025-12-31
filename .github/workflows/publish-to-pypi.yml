@@ -1,0 +1,42 @@
+# .github/workflows/publish-to-pypi.yml
+
+name: Publish Python Package to PyPI
+
+on:
+  # 当在 GitHub 上创建一个新的 “release” 时触发此工作流
+  release:
+    types: [published]
+  # 允许从 Actions 选项卡手动运行此工作流
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    # 为 OIDC 身份令牌设置权限
+    permissions:
+      id-token: write  
+      contents: read   
+
+    steps:
+    # 检出代码
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # Python 环境
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.13'
+
+    # 安装构建依赖
+    - name: Install build dependencies
+      run: python -m pip install --upgrade build
+
+    # 构建 Python 包（sdist 和 wheel）
+    - name: Build package
+      run: python -m build
+
+    # action 会处理 OIDC 令牌交换，无需配置 API token
+    - name: Publish package to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
