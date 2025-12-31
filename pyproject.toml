@@ -1,7 +1,19 @@
 [project]
 name = "pyclog"
-version = "0.1.0"
+version = "0.1.1"
 description = "A Python package for reading and writing .clog files with logging integration."
+authors = [{name = "Akanyi", email = "sakayezq@gmail.com"}]
+license = {text = "MIT"}
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Logging",
+]
 
 [project.scripts]
 pyclog-export = "pyclog.cli:main"
