@@ -1,7 +1,6 @@
-"""
-pyclog.writer
-~~~~~~~~~~~~~
+# pyclog/writer.py
 
+"""
 此模块提供 `ClogWriter` 类，用于创建和写入 .clog 文件。
 它支持多种压缩算法和分块写入，以优化性能和文件大小。
 """

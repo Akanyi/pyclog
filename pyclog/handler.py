@@ -12,6 +12,7 @@ from datetime import datetime # 新增导入
 from .writer import ClogWriter
 from . import constants
 from .exceptions import ClogWriteError
+from .locking import FileLock  # 新增导入
 class ClogFileHandler(logging.Handler):
     """
     一个用于将日志记录写入 .clog 文件的 logging Handler。
@@ -44,8 +45,11 @@ class ClogFileHandler(logging.Handler):
         self.mode = mode 
         self.encoding = encoding
         self.compression_code = compression_code
+        self.encoding = encoding
+        self.compression_code = compression_code
         self.clog_writer = None
-        self._open_writer()
+        self.lock = FileLock(f"{self.filename}.lock") # 初始化进程锁
+        # self._open_writer() # 不再在初始化时打开，而是延迟到 emit
 
     def _open_writer(self):
         """
@@ -57,6 +61,16 @@ class ClogFileHandler(logging.Handler):
         try:
             self.clog_writer = ClogWriter(self.filename, self.mode, self.compression_code)
         except ClogWriteError as e:
+            # 尝试修复：如果文件存在但似乎已损坏（例如大小为0或头部不完整），且我们持有锁，
+            # 则可能是一个僵尸文件。尝试以 'w' 模式重置它。
+            try:
+                if os.path.exists(self.filename) and os.path.getsize(self.filename) < 16:
+                    # 警告：这里会覆盖文件。但在锁保护下且文件明显损坏时，这是合理的恢复策略。
+                    self.clog_writer = ClogWriter(self.filename, 'w', self.compression_code)
+                    return
+            except Exception:
+                pass # 如果恢复失败，则抛出原始异常
+
             import sys
             ei = sys.exc_info()
             self.handleError(logging.LogRecord(self.name, logging.CRITICAL, __file__, 0, f"无法初始化 ClogWriter: {e}", None, ei))
@@ -65,29 +79,30 @@ class ClogFileHandler(logging.Handler):
     def emit(self, record):
         """
         将格式化后的日志记录写入 .clog 文件。
-
-        此方法是 `logging.Handler` 接口的核心部分。它使用处理程序的格式化器
-        将 `LogRecord` 转换为字符串，然后通过 `ClogWriter` 写入文件。
-        任何写入过程中发生的异常都会被捕获并传递给 `handleError`。
-
-        Args:
-            record (logging.LogRecord): 要处理的日志记录对象。
+        此方法是线程和进程安全的。
         """
         try:
-            if self.clog_writer is None:
-                self._open_writer()
-            # 如果尝试后仍然不存在，则无法写入，直接返回
-            if self.clog_writer is None:
-                return
-
-            # 使用 Handler 的 formatter 格式化记录
-            msg = self.format(record)
-            self.clog_writer.write_record(record.levelname, msg)
+            with self.lock:
+                self._emit_internal(record)
         except Exception:
-            # 捕获异常信息并传递给 handleError
             import sys
             record.exc_info = sys.exc_info()
-            self.handleError(record) # 调用 logging.Handler 的 handleError 方法
+            self.handleError(record)
+
+    def _emit_internal(self, record):
+        """
+        内部发射逻辑，假定已获取锁。
+        """
+        self._open_writer()
+        if self.clog_writer is None:
+            return
+
+        try:
+            msg = self.format(record)
+            self.clog_writer.write_record(record.levelname, msg)
+        finally:
+            # 在 Windows 多进程环境下，必须关闭文件句柄以允许其他进程操作（如轮转）
+            self.close()
 
     def close(self):
         """
@@ -118,7 +133,7 @@ class ClogRotatingFileHandler(ClogFileHandler):
         """
         执行日志轮转。
         """
-        # 首先，关闭当前的 writer，这会将缓冲区刷新到待轮转的文件中
+        # 关闭当前的 writer，这会将缓冲区刷新到待轮转的文件中
         if self.clog_writer:
             self.clog_writer.close()
             self.clog_writer = None
@@ -146,10 +161,11 @@ class ClogRotatingFileHandler(ClogFileHandler):
         if self.maxBytes <= 0:
             return False
         
-        # 如果 writer 不存在，意味着这是第一次写入。
-        # 我们让父类的 emit 去创建它，本次不轮转。
-        if self.clog_writer is None:
-            return False
+        # 如果 writer 不存在，意味着这是第一次写入或者被关闭了。
+        # 我们继续检查文件大小。
+        buffer_size = 0
+        if self.clog_writer:
+             buffer_size = self.clog_writer.buffer_current_size
 
         msg = self.format(record)
         
@@ -163,22 +179,16 @@ class ClogRotatingFileHandler(ClogFileHandler):
         except FileNotFoundError:
             current_file_size = 0
 
-        predicted_total_size = current_file_size + self.clog_writer.buffer_current_size + predicted_record_size
+        predicted_total_size = current_file_size + buffer_size + predicted_record_size
         
         return predicted_total_size >= self.maxBytes
 
-    def emit(self, record):
+    def _emit_internal(self, record):
         """
-        发出一条记录。
-        先检查是否需要轮转，然后再执行写入操作。
+        重写内部发射逻辑，增加轮转检查。
         """
-        try:
-            if self.shouldRollover(record):
-                self.doRollover()
-            
-            # 调用父类 emit
-            super().emit(record)
-        except Exception:
-            import sys
-            record.exc_info = sys.exc_info()
-            self.handleError(record)
+        if self.shouldRollover(record):
+            self.doRollover()
+        
+        # 调用父类的 _emit_internal 进行实际写入
+        super()._emit_internal(record)
