@@ -1,40 +1,60 @@
-# This workflow will install Python dependencies, run tests and lint with a variety of Python versions
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
+# .github/workflows/python-package.yml
 
-name: Python package
+name: Python Package CI
 
+# 触发工作流的事件
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "main", "master" ] # 在推送到 main 或 master 分支时触发
   pull_request:
-    branches: [ "master" ]
+    branches: [ "main", "master" ] # 在向 main 或 master 分支发起 PR 时触发
 
 jobs:
-  build:
-
+  build-and-test:
+    # 运行在最新的 Ubuntu 环境中
     runs-on: ubuntu-latest
     strategy:
+      # fail-fast: false 意味着即使一个版本的测试失败，其他版本的测试也会继续运行
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        # 定义要测试的 Python 版本矩阵
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]
 
     steps:
+    # 第一步：检出代码
     - uses: actions/checkout@v4
+
+    # 第二步：设置指定版本的 Python 环境
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v3
+      uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
+
+    # 第三步：安装依赖
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        python -m pip install flake8 pytest
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        # 安装代码风格检查、测试和覆盖率工具
+        python -m pip install flake8 pytest pytest-cov
+        # 以可编辑模式安装 pyclog 包本身，并包含 zstandard 可选依赖
+        # 这是测试 Python 包的标准做法
+        python -m pip install -e .[zstandard]
+
+    # 第四步：使用 flake8 进行代码风格检查
     - name: Lint with flake8
       run: |
-        # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        # 检查 Python 语法错误或未定义变量，如果发现则构建失败
+        flake8 pyclog/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        # 检查其他风格问题（如行长、复杂度），但只报告不失败
+        flake8 pyclog/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+    # 第五步：使用 pytest 运行测试并生成覆盖率报告
     - name: Test with pytest
       run: |
-        pytest
+        pytest --cov=pyclog --cov-report=xml
+
+    # 第六步：上传覆盖率报告到 Codecov
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        fail_ci_if_error: true # 如果上传失败，则 CI 失败
