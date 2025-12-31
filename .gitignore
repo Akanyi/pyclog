@@ -1,0 +1,99 @@
+# ==============================================================================
+#                      Gitignore for Python Projects
+# ==============================================================================
+#
+# A comprehensive .gitignore for Python, tailored for libraries like pyclog.
+# It covers virtual environments, build artifacts, test reports, and IDE files.
+#
+
+# --- Virtual Environments ---------------------------------------------------
+# Never commit virtual environments.
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# --- Python Cache and Bytecode ----------------------------------------------
+# These are generated automatically and should not be version controlled.
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Build, Distribution and Packaging Artifacts ----------------------------
+# These files are generated when you build or publish your package.
+build/
+dist/
+wheels/
+sdist/
+.eggs/
+*.egg-info/
+*.egg
+MANIFEST
+
+# --- Test and Coverage Artifacts --------------------------------------------
+# Test runners and coverage tools generate cache and reports.
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+nosetests.xml
+# Test environments like tox and nox
+.tox/
+.nox/
+
+# --- Static Analysis and Linter Cache ---------------------------------------
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.flake8
+
+# --- IDE and Editor Configuration -------------------------------------------
+# User-specific settings for IDEs and text editors.
+# VS Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+# PyCharm
+.idea/
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+# Vim
+*.sw[op]
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# --- OS-generated Files -----------------------------------------------------
+# System files that should not be in a repository.
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+# Windows
+Thumbs.db
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+# Linux
+*~
+
+# --- Secrets and Local Configuration ----------------------------------------
+# Never commit secrets or sensitive files. Use environment variables.
+*.env
+local_settings.py
+instance/
+
+# --- Python Installer Logs --------------------------------------------------
+pip-log.txt
+pip-delete-this-directory.txt
+
+# --- Sphinx Documentation ---------------------------------------------------
+# If you add Sphinx docs, the build output should be ignored.
+docs/_build/
