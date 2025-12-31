@@ -29,9 +29,9 @@
 | 偏移量 (Bytes) | 长度 (Bytes) | 字段名 | 描述 |
 | :--- | :--- | :--- | :--- |
 | 0-3 | 4 | Magic Bytes | 固定的 `b'CLOG'` (0x43, 0x4C, 0x4F, 0x47)，用于快速识别文件类型。 |
-| 4 | 1 | Format Version | 格式版本号，例如 `\x01` 代表版本1。允许未来升级格式而不破坏向后兼容性。 |
-| 5 | 1 | Compression Code | 压缩算法代码。`\x00`: 无压缩 (用于调试), `\x01`: Gzip, `\x02`: Zstandard。允许扩展。 |
-| 6-15 | 10 | Reserved | 保留字节，用 `\x00` 填充。为未来扩展（如加密标志、元数据等）预留空间。 |
+| 4 | 1 | Format Version | 格式版本号，例如 `\x01` 代表版本1。 |
+| 5 | 1 | Compression Code | 压缩算法代码。`\x00`: 无压缩, `\x01`: Gzip, `\x02`: Zstandard。 |
+| 6-15 | 10 | Reserved | 保留字节，用 `\x00` 填充，为未来扩展预留。 |
 
 #### 2. 数据块 (Chunk) - 变长
 
@@ -39,28 +39,35 @@
 
 | 组成分 | 长度 (Bytes) | 字段名 | 描述 |
 | :--- | :--- | :--- | :--- |
-| 块头 | 4 | Compressed Size | 后面紧跟的 **块数据** 的压缩后字节数。读取时，根据这个值就能知道要读多少字节。 |
-| | 4 | Uncompressed Size | 块数据解压后的原始字节数。用于在解压前分配内存缓冲区。 |
+| 块头 | 4 | Compressed Size | 块数据的压缩后字节数。 |
+| | 4 | Uncompressed Size | 块数据解压后的原始字节数。 |
 | | 4 | Record Count | 这个块中包含的日志记录条数。 |
-| 块数据 (压缩) | Compressed Size | Compressed Log Data | 将多条日志记录序列化后，使用文件头中指定的压缩算法进行压缩得到的数据。 |
+| 块数据 (压缩) | Compressed Size | Compressed Log Data | 多条日志记录序列化后，使用文件头中指定的压缩算法进行压缩得到的数据。 |
 
 #### 3. 块内日志记录的序列化
 
-在压缩之前，块内的多条日志记录被组织为一种简单的文本格式。
-
 **记录结构**: `timestamp<FIELD_DELIMITER>level<FIELD_DELIMITER>message<RECORD_DELIMITER>`
 
-* **字段分隔符 (`FIELD_DELIMITER`)**: 默认为制表符 `\t` (`b'\t'`)，因为它在普通日志消息中出现的概率较低。
-* **记录分隔符 (`RECORD_DELIMITER`)**: 默认为换行符 `\n` (`b'\n'`)，用于分隔不同的日志记录。
-* **多行消息处理**: 为了可靠地使用 `\n` 作为记录分隔符，日志消息体内的所有换行符 `\n` 会被内部替换为垂直制表符 `\v`。在读取或导出时，`\v` 会被转换回 `\n`，从而完整地保留多行日志的格式。
+* **字段分隔符**: 默认为制表符 `\t` (`b'\t'`)。
+* **记录分隔符**: 默认为换行符 `\n` (`b'\n'`)。
+* **多行消息处理**: 为了可靠地分隔记录，日志消息体内的所有换行符 `\n` 会被内部替换为垂直制表符 `\v`。在读取或导出时，`\v` 会被自动转换回 `\n`，从而完整保留多行日志的格式。
 
 ## 安装
 
+**基础安装 (支持 Gzip 和无压缩):**
+
 ```bash
 pip install pyclog
-# 如果需要 Zstandard 压缩支持
-pip install pyclog[zstandard]
 ```
+
+**安装并支持 Zstandard 压缩:**
+`pyclog` 使用可选依赖来支持 Zstandard 压缩。
+
+```bash
+pip install 'pyclog[zstandard]'
+```
+
+>*在某些 shell (如 zsh) 中，你可能需要使用引号来防止方括号被解释*
 
 ## 使用示例
 
@@ -83,12 +90,12 @@ with ClogWriter("my_log.clog", compression_code=constants.COMPRESSION_GZIP) as w
 with ClogWriter("my_debug_log.clog", compression_code=constants.COMPRESSION_NONE) as writer:
     writer.write_record("DEBUG", "这是调试日志。")
 
-# 如果安装了 python-zstandard，可以使用 Zstandard 压缩
+# 如果安装了 zstandard 依赖，可以使用 Zstandard 压缩
 try:
     with ClogWriter("my_zstd_log.clog", compression_code=constants.COMPRESSION_ZSTANDARD) as writer:
         writer.write_record("INFO", "这是 Zstandard 压缩的日志。")
 except UnsupportedCompressionError as e:
-    print(f"错误: {e}")
+    print(f"错误: {e}. 请运行 'pip install pyclog[zstandard]' 来安装支持。")
 ```
 
 ### 读取 `.clog` 文件
@@ -114,43 +121,28 @@ with ClogReader("my_log.clog") as reader:
 import logging
 from pyclog import ClogFileHandler, constants
 
-# 1. 配置日志器
 logger = logging.getLogger("my_app")
 logger.setLevel(logging.INFO)
 
-# 2. 创建 ClogFileHandler 实例
-clog_handler = ClogFileHandler("app.clog", compression_code=constants.COMPRESSION_GZIP)
+# 创建 ClogFileHandler 实例
+handler = ClogFileHandler("app.clog", compression_code=constants.COMPRESSION_GZIP)
 
-# 3. 设置日志格式 (关键：只格式化消息本身)
-# ClogWriter 会自动添加时间戳和日志级别
+# 设置日志格式 (关键：只格式化消息本身)
 formatter = logging.Formatter('%(message)s')
-clog_handler.setFormatter(formatter)
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
-# 4. 将 handler 添加到日志器
-logger.addHandler(clog_handler)
-
-# 5. 记录日志
+# 记录日志
 logger.info("应用程序启动。")
 logger.warning("发现一个潜在问题。")
-logger.error("处理请求时发生异常。", exc_info=True) # 异常信息也会被记录
+logger.error("处理请求时发生异常。", exc_info=True)
 
-# 确保所有缓冲的日志都已写入文件
-# 在实际应用中，通常在程序退出时统一关闭
-clog_handler.close()
-
-print("日志已写入 app.clog 文件。")
-
-# 验证写入的日志
-from pyclog import ClogReader
-with ClogReader("app.clog") as reader:
-    print("\n--- 从 app.clog 读取日志 ---")
-    for timestamp, level, message in reader.read_records():
-        print(f"[{timestamp}] [{level}] {message}")
+handler.close()
 ```
 
 #### 日志轮转 (`ClogRotatingFileHandler`)
 
-`pyclog` 还提供了 `ClogRotatingFileHandler`，它继承自 `ClogFileHandler` 并增加了基于文件大小的日志轮转功能，类似于 `logging.handlers.RotatingFileHandler`。
+`pyclog` 还提供了 `ClogRotatingFileHandler`，它增加了基于文件大小的日志轮转功能，类似于 `logging.handlers.RotatingFileHandler`。
 
 ```python
 import logging
@@ -170,37 +162,22 @@ handler = ClogRotatingFileHandler(
     compression_code=constants.COMPRESSION_GZIP
 )
 
-# 同样，格式化器只应包含消息
-formatter = logging.Formatter('%(message)s - %(name)s')
+formatter = logging.Formatter('%(message)s')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 # 记录日志直到触发轮转
-print("开始记录日志以触发轮转...")
 for i in range(20):
     logger.info(f"这是第 {i+1} 条测试日志。")
     time.sleep(0.01)
 
 handler.close()
-print("日志已写入 rotating_app.clog 并已根据需要进行了轮转。")
-print("检查目录下是否存在 rotating_app.clog, rotating_app.clog.1 等文件。")
+print("日志已写入并根据需要进行了轮转。")
 ```
 
 ## 命令行工具 (CLI)
 
 `pyclog` 提供了一个命令行工具，用于将 `.clog` 文件导出为其他格式（JSON 或纯文本），并支持对输出文件进行压缩。
-
-### 安装 CLI
-
-CLI 工具随 `pyclog` 包一起安装。
-
-```bash
-pip install pyclog
-# 如果需要 Zstandard 压缩/解压缩支持
-pip install pyclog[zstandard]
-```
-
-### 使用 CLI
 
 **基本用法：**
 
@@ -212,15 +189,15 @@ pyclog --input <input_file.clog> --output <output_file> [--format <json|text>] [
 
 * `--input`, `-i`：**必需**。要读取的 `.clog` 文件路径。
 * `--output`, `-o`：**必需**。导出文件的输出路径。
-* `--format`, `-f`：导出格式。可选值：`json` 或 `text`。默认为 `text`。
-  * `json`：将每条日志记录导出为 JSON 对象数组。
-  * `text`：将每条日志记录导出为 `时间戳|日志级别|日志消息` 格式的纯文本。此格式还会对多行日志进行智能对齐，以提高可读性。
-* `--compress`, `-c`：导出文件的压缩格式。可选值：`none`, `gzip`, `zstd`。默认为 `none`。
-  * 选择 `zstd` 需要额外安装 `python-zstandard` 库。
+* `--format`, `-f`：导出格式。`json` 或 `text`。默认为 `text`。
+  * `json`：将日志导出为 JSON 对象数组。
+  * `text`：将日志导出为 `时间戳|日志级别|日志消息` 格式的纯文本，并对多行日志进行智能对齐。
+* `--compress`, `-c`：导出文件的压缩格式。`none`, `gzip`, `zstd`。默认为 `none`。
+  * 选择 `zstd` 需要安装 `zstandard` 库。
 
 **示例：**
 
-1. **将 `.clog` 文件导出为纯文本文件 (无压缩)：**
+1. **将 `.clog` 文件导出为纯文本文件：**
 
     ```bash
     pyclog -i my_log.clog -o my_log.txt -f text
@@ -238,17 +215,26 @@ pyclog --input <input_file.clog> --output <output_file> [--format <json|text>] [
     pyclog -i my_log.clog -o my_log.json.zst -f json -c zstd
     ```
 
-## 开发
+## 开发与贡献
 
-### 运行测试
+欢迎贡献！请确保安装开发和测试所需的依赖。
+
+**设置开发环境:**
 
 ```bash
-pytest tests/
+# 克隆仓库
+git clone https://github.com/Akanyi/pyclog.git
+cd pyclog
+
+# 以可编辑模式安装包，并包含 test 和 zstandard 依赖
+pip install -e .[test,zstandard]
 ```
 
-## 贡献
+**运行测试:**
 
-欢迎贡献！请参阅 `DEVELOPMENT.md` 获取更多信息。
+```bash
+pytest
+```
 
 ## 许可证
 
