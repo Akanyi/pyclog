@@ -3,6 +3,7 @@
 import pytest
 import os
 import logging
+import struct
 from datetime import datetime, timedelta
 
 from pyclog.writer import ClogWriter
@@ -81,7 +82,7 @@ def test_reader_invalid_magic_bytes(tmp_path):
     """测试读取无效 Magic Bytes 的文件。"""
     bad_file = tmp_path / "bad.clog"
     with open(bad_file, 'wb') as f:
-        f.write(b'BAD!' + constants.FORMAT_VERSION_V1 + constants.COMPRESSION_GZIP + constants.RESERVED_BYTES)
+        f.write(b'BAD!' + struct.pack('<H', constants.FORMAT_VERSION) + struct.pack('<2s', constants.COMPRESSION_GZIP) + constants.RESERVED_BYTES)
     
     with pytest.raises(InvalidClogFileError, match="无效的 Magic Bytes"):
         ClogReader(bad_file)
@@ -90,7 +91,7 @@ def test_reader_unsupported_compression_code(tmp_path):
     """测试读取不支持的压缩代码的文件。"""
     bad_file = tmp_path / "unsupported.clog"
     with open(bad_file, 'wb') as f:
-        f.write(constants.MAGIC_BYTES + constants.FORMAT_VERSION_V1 + b'\x99' + constants.RESERVED_BYTES)
+        f.write(constants.MAGIC_BYTES + struct.pack('<H', constants.FORMAT_VERSION) + struct.pack('<2s', b'\x99') + constants.RESERVED_BYTES)
     
     with pytest.raises(UnsupportedCompressionError, match="不支持的压缩算法代码"):
         ClogReader(bad_file)

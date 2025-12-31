@@ -16,7 +16,7 @@ except ImportError:
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from pyclog.cli import main as cli_main
+from pyclog.cli import main as cli_main, handle_export
 from pyclog.writer import ClogWriter
 from pyclog import constants
 
@@ -53,7 +53,9 @@ class TestCli(unittest.TestCase):
             "input": self.input_clog_path,
             "output": output_path,
             "format": "text",
-            "compress": "none"
+            "compress": "none",
+            "command": "export",
+            "func": handle_export
         }
         stdout, stderr = self._run_cli(args)
         self.assertIn("成功将", stdout)
@@ -72,7 +74,9 @@ class TestCli(unittest.TestCase):
             "input": self.input_clog_path,
             "output": output_path,
             "format": "json",
-            "compress": "none"
+            "compress": "none",
+            "command": "export",
+            "func": handle_export
         }
         stdout, stderr = self._run_cli(args)
         self.assertIn("成功将", stdout)
@@ -92,7 +96,9 @@ class TestCli(unittest.TestCase):
             "input": self.input_clog_path,
             "output": output_path,
             "format": "text",
-            "compress": "gzip"
+            "compress": "gzip",
+            "command": "export",
+            "func": handle_export
         }
         stdout, stderr = self._run_cli(args)
         self.assertIn("成功将", stdout)
@@ -109,7 +115,9 @@ class TestCli(unittest.TestCase):
             "input": self.input_clog_path,
             "output": output_path,
             "format": "json",
-            "compress": "gzip"
+            "compress": "gzip",
+            "command": "export",
+            "func": handle_export
         }
         stdout, stderr = self._run_cli(args)
         self.assertIn("成功将", stdout)
@@ -127,7 +135,9 @@ class TestCli(unittest.TestCase):
             "input": self.input_clog_path,
             "output": output_path,
             "format": "text",
-            "compress": "zstd"
+            "compress": "zstd",
+            "command": "export",
+            "func": handle_export
         }
         stdout, stderr = self._run_cli(args)
         self.assertIn("成功将", stdout)
@@ -148,7 +158,9 @@ class TestCli(unittest.TestCase):
             "input": self.input_clog_path,
             "output": output_path,
             "format": "json",
-            "compress": "zstd"
+            "compress": "zstd",
+            "command": "export",
+            "func": handle_export
         }
         stdout, stderr = self._run_cli(args)
         self.assertIn("成功将", stdout)
@@ -169,7 +181,9 @@ class TestCli(unittest.TestCase):
             "input": "non_existent.clog",
             "output": output_path,
             "format": "text",
-            "compress": "none"
+            "compress": "none",
+            "command": "export",
+            "func": handle_export
         }
         with patch('sys.stdout', new_callable=io.StringIO) as mock_stdout:
             with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
@@ -193,7 +207,9 @@ class TestCli(unittest.TestCase):
             "input": invalid_clog_path,
             "output": output_path,
             "format": "text",
-            "compress": "none"
+            "compress": "none",
+            "command": "export",
+            "func": handle_export
         }
         with patch('sys.stdout', new_callable=io.StringIO) as mock_stdout:
             with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:

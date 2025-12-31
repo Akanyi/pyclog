@@ -23,10 +23,18 @@ def test_writer_initialization_and_header(temp_clog_file):
     assert temp_clog_file.exists()
     with open(temp_clog_file, 'rb') as f:
         header = f.read(16)
+        # 0-4 Magic
         assert header[0:4] == constants.MAGIC_BYTES
-        assert header[4:5] == constants.FORMAT_VERSION_V1
-        assert header[5:6] == constants.COMPRESSION_GZIP
-        assert header[6:16] == constants.RESERVED_BYTES
+        # 4-6 Version (2 bytes, unsigned short)
+        version = struct.unpack('<H', header[4:6])[0]
+        assert version == constants.FORMAT_VERSION
+        # 6-8 Compression (2 bytes string)
+        compression = header[6:8]
+        # pack('2s', ...) pads with nulls if needed. GZIP is b'\x01'.
+        expected_compression = struct.pack('<2s', constants.COMPRESSION_GZIP)
+        assert compression == expected_compression
+        # 8-16 Reserved
+        assert header[8:16] == constants.RESERVED_BYTES
 
 def test_writer_no_compression(temp_clog_file):
     """测试无压缩模式下的写入。"""
