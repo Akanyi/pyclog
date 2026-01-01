@@ -1,7 +1,6 @@
-"""
-pyclog.handler
-~~~~~~~~~~~~~~
+# pyclog/handler.py
 
+"""
 此模块提供 `ClogFileHandler` 类，这是一个 `logging.Handler` 的实现，
 用于将 Python `logging` 模块生成的日志记录写入自定义的 .clog 文件格式。
 """
@@ -23,7 +22,7 @@ class ClogFileHandler(logging.Handler):
     可以处理的格式，并将其写入指定的 .clog 文件。它支持追加模式
     和不同的压缩算法，这些都由底层的 `ClogWriter` 处理。
     """
-    def __init__(self, filename, mode='a', encoding=None, compression_code=constants.COMPRESSION_GZIP, flush_interval=5.0):
+    def __init__(self, filename, mode='a', encoding=None, compression_code=constants.COMPRESSION_GZIP, flush_interval=constants.DEFAULT_FLUSH_INTERVAL):
         """
         初始化 ClogFileHandler 实例。
 

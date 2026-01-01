@@ -7,7 +7,6 @@
 
 import gzip
 import struct
-import struct
 import time
 from datetime import datetime
 
@@ -86,8 +85,8 @@ class ClogReader:
             ClogReadError: 如果读取文件头时发生 I/O 错误。
         """
         try:
-            header = self.file.read(16)
-            if len(header) < 16:
+            header = self.file.read(constants.HEADER_SIZE)
+            if len(header) < constants.HEADER_SIZE:
                 raise InvalidClogFileError("文件太短，无法读取完整的 .clog 文件头。")
 
             try:
@@ -101,29 +100,10 @@ class ClogReader:
             if format_version != constants.FORMAT_VERSION:
                 raise InvalidClogFileError(f"不支持的格式版本: {format_version}。期望: {constants.FORMAT_VERSION}")
 
-            # 去除 padding
-            compression_code = compression_code_padded.rstrip(b'\0')
-            if not compression_code and compression_code_padded == b'\0\0':
-                 # Handle explicit None compression if it was padded to \0\0?
-                 # strict constants.COMPRESSION_NONE is b'\x00'. 
-                 # '2s' of b'\x00' is b'\x00\x00'. rstrip(b'\0') becomes empty bytes b''.
-                 # So we need to be careful.
-                 # Let's say compression codes are 1 byte usually.
-                 pass
-            
-            # Re-evaluating compression code handling:
-            # writer uses '2s'. constant is b'\x01'. pack('2s', b'\x01') -> b'\x01\x00'.
-            # constant is b'\x00'. pack('2s', b'\x00') -> b'\x00\x00'.
-            # So if we read b'\x00\x00', stripping \0 gives b''.
-            # But we want b'\x00'.
-            # Simpler: just compare the first byte? Or define expectations.
-            # If we unpadded, b'\x01\x00' -> b'\x01'.
-            # b'\x00\x00' -> b''.
-            # So special case for empty stripping?
-            # Or just take the first byte if we know codes are 1 byte?
-            # Let's check constants.
-            
-            self.compression_code = compression_code_padded[0:1] # Just take first byte assuming 1-byte codes
+            # 压缩代码字段为2字节，但实际代码通常是1字节（如 b'\x01'）
+            # 所以使用 struct.unpack('2s') 读取后会得到 b'\x01\x00'
+            # 第一个字节即可代表压缩算法
+            self.compression_code = compression_code_padded[0:1]
             self.format_version = format_version
 
             if self.compression_code not in [
@@ -192,14 +172,14 @@ class ClogReader:
             ClogReadError: 如果文件意外结束或块头解析失败。
         """
         while True:
-            chunk_header_bytes = self.file.read(12)
+            chunk_header_bytes = self.file.read(constants.CHUNK_HEADER_SIZE)
             if not chunk_header_bytes:
                 if follow:
                     time.sleep(interval)
                     continue
                 else:
                     break
-            if len(chunk_header_bytes) < 12:
+            if len(chunk_header_bytes) < constants.CHUNK_HEADER_SIZE:
                 raise ClogReadError("文件意外结束，无法读取完整的块头。")
 
             try:
@@ -218,7 +198,7 @@ class ClogReader:
         """
         流式读取并解析文件中的所有日志记录。
 
-        此方法通过迭代数据块，将每个解压后的数据块分割成单独的日志记，
+        此方法通过迭代数据块，将每个解压后的数据块分割成单独的日志记录，
         并解析出时间戳、日志级别和消息。
 
         Yields:
@@ -260,9 +240,8 @@ class ClogReader:
             list: 包含最后 n 条记录的 list (timestamp, level, message)。
         """
         # 保存当前文件位置，以便恢复（如果需要，不过通常 tail 后继续读也合理）
-        # 但我们这里假设 tail 是独立操作，或者把文件指针留在了末尾
         try:
-            self.file.seek(16) # Skip file header
+            self.file.seek(constants.HEADER_SIZE) # Skip file header
         except IOError:
              return [] # Empty file or error?
 
@@ -272,8 +251,8 @@ class ClogReader:
             try:
                 # 记录 Chunk Header 开始位置
                 header_offset = self.file.tell()
-                chunk_header_bytes = self.file.read(12)
-                if not chunk_header_bytes or len(chunk_header_bytes) < 12:
+                chunk_header_bytes = self.file.read(constants.CHUNK_HEADER_SIZE)
+                if not chunk_header_bytes or len(chunk_header_bytes) < constants.CHUNK_HEADER_SIZE:
                     break
                 
                 compressed_size, uncompressed_size, record_count = struct.unpack('<III', chunk_header_bytes)
@@ -328,17 +307,9 @@ class ClogReader:
                 except Exception:
                     pass
                     
-        # 此时 self.file 指向了末尾吗？
-        # 我们最后读的是 chunks_to_read 的最后一个。
-        # 如果 chunks_to_read 包含了最后一个块，读完后指针就在 EOF。
-        # 如果 n=0, chunks_to_read为空，指针在 EOF (扫描循环结束的位置)。
-        # 只要我们不做额外的 seek，通常会在正确位置。
-        # 但为了保险，特别是如果 n 不需要读取最后一个块的情况(虽然很少见，tail通常是要最新的)，
-        # 我们应该确保指针在该在的位置。
-        # 如果是 tail -f，需要在 EOF。
-        # 上面的扫描循环 `while True` 结束后，指针就在 EOF。
-        # 但是我们中间 seek 到了前面的块去读。
-        # 所以必须 seek 回 EOF 以支持后续的 follow。
+        # 确保文件指针回到 EOF。
+        # tail 操作中我们会 seek 回去读取旧的数据块，
+        # 为了支持后续的 follow (tail -f) 操作，必须重置指针到文件末尾。
         self.file.seek(0, 2) 
         
         return results[-n:] if n > 0 else []

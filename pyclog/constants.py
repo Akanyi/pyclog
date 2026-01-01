@@ -14,3 +14,6 @@ RESERVED_BYTES = b'\x00' * 8  # 保留字节，用 \x00 填充
 # 块内日志记录的序列化格式
 RECORD_DELIMITER = b'\n'  # 记录分隔符
 FIELD_DELIMITER = b'\t'  # 字段分隔符
+HEADER_SIZE = 16 # 文件头大小 (字节)
+CHUNK_HEADER_SIZE = 12 # 块头大小 (字节)
+DEFAULT_FLUSH_INTERVAL = 5.0 # 默认刷新间隔 (秒)

@@ -1,3 +1,5 @@
+# pyclog/async_handler.py
+
 
 import logging
 import queue
@@ -41,10 +43,8 @@ class AsyncClogHandler(QueueHandler):
             self.listener.stop()
             self.listener = None
         
-        # QueueListener.stop() 不会自动关闭 handler，我们需要手动关闭
-        # 但通常 QueueHandler 不负责关闭 target_handler，除非它是我们拥有的
-        # 这里为了方便，我们尝试关闭它
-        # 注意：logging 系统 shutdown 时也会尝试关闭所有 handler
+        # QueueListener.stop() 不会自动关闭 handler，需要手动关闭
+        # 但通常 QueueHandler 不负责关闭 target_handler，除非它是拥有的
         
     def close(self):
         """

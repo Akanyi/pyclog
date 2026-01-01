@@ -40,7 +40,7 @@ class ClogWriter:
     """
     def __init__(self, file_path, mode='w', compression_code=constants.COMPRESSION_GZIP,
                  buffer_flush_size=4 * 1024 * 1024, buffer_flush_records=20000,
-                 flush_interval=5.0):
+                 flush_interval=constants.DEFAULT_FLUSH_INTERVAL):
         """
         初始化 ClogWriter 实例。
 
@@ -57,7 +57,7 @@ class ClogWriter:
             buffer_flush_size (int, optional): 缓冲区达到此字节大小时刷新。默认为 4MB。
             buffer_flush_records (int, optional): 缓冲区达到此记录数时刷新。默认为 20000 条记录。
             flush_interval (float, optional): 被动刷新间隔（秒）。如果自上次刷新以来超过此时间，
-                                              则在写入下一条记录时强制刷新。默认为 5.0 秒。
+                                              则在写入下一条记录时强制刷新。默认为 `constants.DEFAULT_FLUSH_INTERVAL` (5.0 秒)。
 
         Raises:
             ClogWriteError: 如果文件无法打开或在追加模式下文件头验证失败。
@@ -105,8 +105,8 @@ class ClogWriter:
         """
         try:
             self.file.seek(0)
-            header = self.file.read(16)
-            if len(header) < 16:
+            header = self.file.read(constants.HEADER_SIZE)
+            if len(header) < constants.HEADER_SIZE:
                  raise InvalidClogFileError("文件太小，不是有效的 .clog 文件")
             
             magic, version, compression_code, _ = struct.unpack('<4sH2s8s', header)

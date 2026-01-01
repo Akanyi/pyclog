@@ -10,9 +10,9 @@
 
 ### 核心设计思想
 
-* **文件头 (Header)**: 用于快速识别文件类型、版本和压缩算法。
-* **数据块 (Chunk)**: 将多条日志记录组合在一起进行压缩，以获得高压缩率。
-* **流式处理**: 可以一条一条地写入，也可以一个块一个块地读取，无需将整个文件加载到内存。
+- **文件头 (Header)**: 用于快速识别文件类型、版本和压缩算法。
+- **数据块 (Chunk)**: 将多条日志记录组合在一起进行压缩，以获得高压缩率。
+- **流式处理**: 可以一条一条地写入，也可以一个块一个块地读取，无需将整个文件加载到内存。
 
 ### 文件结构
 
@@ -24,33 +24,33 @@
 [ Chunk N ]
 ```
 
-#### 1. 文件头 (File Header) - 固定16字节
+#### 1. 文件头 (File Header) - 固定 16 字节
 
-| 偏移量 (Bytes) | 长度 (Bytes) | 字段名 | 描述 |
-| :--- | :--- | :--- | :--- |
-| 0-3 | 4 | Magic Bytes | 固定的 `b'CLOG'` (0x43, 0x4C, 0x4F, 0x47)，用于快速识别文件类型。 |
-| 4 | 1 | Format Version | 格式版本号，例如 `\x01` 代表版本1。 |
-| 5 | 1 | Compression Code | 压缩算法代码。`\x00`: 无压缩, `\x01`: Gzip, `\x02`: Zstandard。 |
-| 6-15 | 10 | Reserved | 保留字节，用 `\x00` 填充，为未来扩展预留。 |
+| 偏移量 (Bytes) | 长度 (Bytes) | 字段名           | 描述                                                                                     |
+| :------------- | :----------- | :--------------- | :--------------------------------------------------------------------------------------- |
+| 0-3            | 4            | Magic Bytes      | 固定的 `b'CLOG'` (0x43, 0x4C, 0x4F, 0x47)，用于快速识别文件类型。                        |
+| 4-5            | 2            | Format Version   | 格式版本号 (Unsigned Short, Little-Endian)，当前为 `1`。                                 |
+| 6-7            | 2            | Compression Code | 压缩算法代码 (2 字节，第一个字节有效)。`\x00`: 无压缩, `\x01`: Gzip, `\x02`: Zstandard。 |
+| 8-15           | 8            | Reserved         | 保留字节，用 `\x00` 填充，为未来扩展预留。                                               |
 
 #### 2. 数据块 (Chunk) - 变长
 
 每个数据块由 **块头 (Chunk Header)** 和 **块数据 (Chunk Data)** 组成。
 
-| 组成分 | 长度 (Bytes) | 字段名 | 描述 |
-| :--- | :--- | :--- | :--- |
-| 块头 | 4 | Compressed Size | 块数据的压缩后字节数。 |
-| | 4 | Uncompressed Size | 块数据解压后的原始字节数。 |
-| | 4 | Record Count | 这个块中包含的日志记录条数。 |
+| 组成分        | 长度 (Bytes)    | 字段名              | 描述                                                                 |
+| :------------ | :-------------- | :------------------ | :------------------------------------------------------------------- |
+| 块头          | 4               | Compressed Size     | 块数据的压缩后字节数。                                               |
+|               | 4               | Uncompressed Size   | 块数据解压后的原始字节数。                                           |
+|               | 4               | Record Count        | 这个块中包含的日志记录条数。                                         |
 | 块数据 (压缩) | Compressed Size | Compressed Log Data | 多条日志记录序列化后，使用文件头中指定的压缩算法进行压缩得到的数据。 |
 
 #### 3. 块内日志记录的序列化
 
 **记录结构**: `timestamp<FIELD_DELIMITER>level<FIELD_DELIMITER>message<RECORD_DELIMITER>`
 
-* **字段分隔符**: 默认为制表符 `\t` (`b'\t'`)。
-* **记录分隔符**: 默认为换行符 `\n` (`b'\n'`)。
-* **多行消息处理**: 为了可靠地分隔记录，日志消息体内的所有换行符 `\n` 会被内部替换为垂直制表符 `\v`。在读取或导出时，`\v` 会被自动转换回 `\n`，从而完整保留多行日志的格式。
+- **字段分隔符**: 默认为制表符 `\t` (`b'\t'`)。
+- **记录分隔符**: 默认为换行符 `\n` (`b'\n'`)。
+- **多行消息处理**: 为了可靠地分隔记录，日志消息体内的所有换行符 `\n` 会被内部替换为垂直制表符 `\v`。在读取或导出时，`\v` 会被自动转换回 `\n`，从而完整保留多行日志的格式。
 
 ## 安装
 
@@ -67,7 +67,7 @@ pip install pyclog
 pip install 'pyclog[zstandard]'
 ```
 
->*在某些 shell (如 zsh) 中，你可能需要使用引号来防止方括号被解释*
+> _在某些 shell (如 zsh) 中，你可能需要使用引号来防止方括号被解释_
 
 ## 使用示例
 
@@ -140,80 +140,138 @@ logger.error("处理请求时发生异常。", exc_info=True)
 handler.close()
 ```
 
-#### 日志轮转 (`ClogRotatingFileHandler`)
+#### 基于大小轮转 (`ClogRotatingFileHandler`)
 
-`pyclog` 还提供了 `ClogRotatingFileHandler`，它增加了基于文件大小的日志轮转功能，类似于 `logging.handlers.RotatingFileHandler`。
+`pyclog` 提供了 `ClogRotatingFileHandler`，它增加了基于文件大小的日志轮转功能，类似于 `logging.handlers.RotatingFileHandler`。
 
 ```python
 import logging
-import time
 from pyclog import ClogRotatingFileHandler, constants
 
 logger = logging.getLogger("my_rotating_app")
 logger.setLevel(logging.DEBUG)
 
-# 创建 ClogRotatingFileHandler 实例
-# 当文件大小接近 256 字节时进行轮转，最多保留 3 个备份文件。
+# 当文件大小接近 1MB 时进行轮转，最多保留 5 个备份文件。
 handler = ClogRotatingFileHandler(
     "rotating_app.clog",
-    mode='w',
-    maxBytes=256,
-    backupCount=3,
+    maxBytes=1024*1024,
+    backupCount=5,
     compression_code=constants.COMPRESSION_GZIP
 )
-
-formatter = logging.Formatter('%(message)s')
-handler.setFormatter(formatter)
+handler.setFormatter(logging.Formatter('%(message)s'))
 logger.addHandler(handler)
 
-# 记录日志直到触发轮转
-for i in range(20):
-    logger.info(f"这是第 {i+1} 条测试日志。")
-    time.sleep(0.01)
-
+logger.info("开始记录日志...")
 handler.close()
-print("日志已写入并根据需要进行了轮转。")
+```
+
+#### 基于时间轮转 (`ClogTimedRotatingFileHandler`)
+
+`ClogTimedRotatingFileHandler` 支持基于时间间隔的日志轮转，类似于 `logging.handlers.TimedRotatingFileHandler`。
+
+```python
+import logging
+from pyclog import ClogTimedRotatingFileHandler, constants
+
+logger = logging.getLogger("my_timed_app")
+logger.setLevel(logging.INFO)
+
+# 每小时轮转一次，最多保留 24 个备份 (一天)
+handler = ClogTimedRotatingFileHandler(
+    "timed_app.clog",
+    when='H',         # 'S'=秒, 'M'=分, 'H'=时, 'D'=天, 'MIDNIGHT'=午夜
+    interval=1,
+    backupCount=24,
+    compression_code=constants.COMPRESSION_GZIP
+)
+handler.setFormatter(logging.Formatter('%(message)s'))
+logger.addHandler(handler)
+
+logger.info("应用程序启动。")
+handler.close()
+```
+
+#### 异步日志 (`AsyncClogHandler`)
+
+`AsyncClogHandler` 将日志写入操作放入后台线程，避免 I/O 阻塞主线程，适合高性能场景。
+
+```python
+import logging
+from pyclog import ClogFileHandler, AsyncClogHandler
+
+logger = logging.getLogger("my_async_app")
+logger.setLevel(logging.INFO)
+
+# 创建底层的 ClogFileHandler
+file_handler = ClogFileHandler("async_app.clog")
+file_handler.setFormatter(logging.Formatter('%(message)s'))
+
+# 用 AsyncClogHandler 包装，实现异步写入
+async_handler = AsyncClogHandler(file_handler)
+logger.addHandler(async_handler)
+
+logger.info("这条日志会异步写入文件。")
+
+# 程序退出时会自动停止后台线程并刷新缓冲区
 ```
 
 ## 命令行工具 (CLI)
 
-`pyclog` 提供了一个命令行工具，用于将 `.clog` 文件导出为其他格式（JSON 或纯文本），并支持对输出文件进行压缩。
+`pyclog` 提供了一个功能丰富的命令行工具，支持导出、实时追踪和搜索日志。
 
-**基本用法：**
+### `export` - 导出日志
+
+将 `.clog` 文件导出为 JSON 或纯文本格式。
 
 ```bash
-pyclog --input <input_file.clog> --output <output_file> [--format <json|text>] [--compress <none|gzip|zstd>]
+pyclog export -i <input.clog> -o <output.txt> [-f json|text] [-c none|gzip|zstd]
 ```
-
-**参数说明：**
-
-* `--input`, `-i`：**必需**。要读取的 `.clog` 文件路径。
-* `--output`, `-o`：**必需**。导出文件的输出路径。
-* `--format`, `-f`：导出格式。`json` 或 `text`。默认为 `text`。
-  * `json`：将日志导出为 JSON 对象数组。
-  * `text`：将日志导出为 `时间戳|日志级别|日志消息` 格式的纯文本，并对多行日志进行智能对齐。
-* `--compress`, `-c`：导出文件的压缩格式。`none`, `gzip`, `zstd`。默认为 `none`。
-  * 选择 `zstd` 需要安装 `zstandard` 库。
 
 **示例：**
 
-1. **将 `.clog` 文件导出为纯文本文件：**
+```bash
+# 导出为纯文本
+pyclog export -i app.clog -o app.txt
 
-    ```bash
-    pyclog -i my_log.clog -o my_log.txt -f text
-    ```
+# 导出为 Gzip 压缩的 JSON
+pyclog export -i app.clog -o app.json.gz -f json -c gzip
+```
 
-2. **将 `.clog` 文件导出为 Gzip 压缩的 JSON 文件：**
+### `tail` - 查看最新日志
 
-    ```bash
-    pyclog -i my_log.clog -o my_log.json.gz -f json -c gzip
-    ```
+类似 `tail` 命令，查看最后 N 条日志，支持 `-f` 实时追踪。
 
-3. **将 `.clog` 文件导出为 Zstandard 压缩的 JSON 文件：**
+```bash
+pyclog tail -i <input.clog> [-n 10] [-f]
+```
 
-    ```bash
-    pyclog -i my_log.clog -o my_log.json.zst -f json -c zstd
-    ```
+**示例：**
+
+```bash
+# 查看最后 20 条日志
+pyclog tail -i app.clog -n 20
+
+# 实时追踪日志 (类似 tail -f)
+pyclog tail -i app.clog -f
+```
+
+### `grep` - 搜索日志
+
+在日志中搜索匹配的内容，支持正则表达式。
+
+```bash
+pyclog grep -i <input.clog> -p <pattern> [--regex]
+```
+
+**示例：**
+
+```bash
+# 搜索包含 "ERROR" 的日志
+pyclog grep -i app.clog -p "ERROR"
+
+# 使用正则表达式搜索
+pyclog grep -i app.clog -p "user_id=\d+" --regex
+```
 
 ## 开发与贡献
 
